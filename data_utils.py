@@ -4,7 +4,6 @@ import pandas as pd
 import numpy as np
 import time
 import MetarHandler
-import tensorflow as tf
 import datetime
 import urllib.request
 import zipfile
@@ -43,8 +42,12 @@ def read_flight_sheet(directory):
     flight_sheet = pd.read_excel(fname,
                                  header=0,
                                  names=names,
-                                 usecols=cols,
-                                 parse_dates={'datetime': ["date", "time"]})
+                                 usecols=cols)
+    # combine date + time manually (dict-style `parse_dates` was removed in pandas 3)
+    flight_sheet.insert(0, 'datetime',
+                        pd.to_datetime(flight_sheet.date, errors='coerce').dt.normalize() +
+                        pd.to_timedelta(flight_sheet.time.astype(str), errors='coerce'))
+    flight_sheet = flight_sheet.drop(columns=['date', 'time'])
     flight_sheet = flight_sheet.drop(
         flight_sheet[~flight_sheet.route.isin([5, 'New long route', 'Test'])].
         index)
@@ -312,6 +315,8 @@ def create_tensors(data,
                    input_type='concat',
                    drop_remainder=True,
                    **kwargs):
+    # imported here so the rest of this module works without tensorflow (e.g. from PyTorch code)
+    import tensorflow as tf
 
     # model strategy is one of following
     assert input_type in ['mixed', 'concat']
