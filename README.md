@@ -1,3 +1,78 @@
+# Deep Energy Model — PyTorch port
+
+A PyTorch port of the TCN and LSTM energy models from
+[castacks/cvar-energy-risk-deep-model](https://github.com/castacks/cvar-energy-risk-deep-model)
+(Choudhry, Moon, Patrikar et al., ICRA 2021). The original Keras code and README are kept below.
+
+The converted pretrained models reproduce the original Keras outputs (max difference < 4e-7)
+and the paper's power MAPE.
+
+## Setup
+
+```bash
+conda create -n idl_project python=3.12 -y
+conda activate idl_project
+pip install -r <(grep -v keras-tcn requirements-torch.txt)
+pip install --no-deps keras-tcn==3.1.1   # only needed for port_weights.py --verify
+```
+
+Get the dataset (once): `python train_torch.py -D --total_epochs 0`, which downloads and unzips it into `./data/`.
+
+## Commands
+
+| Command | What it does |
+|---|---|
+| `python evaluate_torch.py` | Scores the pretrained b-TCN on the test flights: power MAPE % / energy error RE %. |
+| `python evaluate_torch.py -m all -e random test` | Reproduces the paper's table for all four pretrained models. |
+| `python evaluate_torch.py -m s-TCN Results/ckpts/<run>/final.pt -e random test` | Compares your own trained checkpoint with a pretrained model. |
+| `python train_torch.py` | Trains a TCN with the default settings (32 filters, kernel 3, 4 layers, 10 epochs). |
+| `python port_weights.py` | Converts the Keras checkpoints in `models/` to `models_torch/*.pt`. Already done; needs TensorFlow. |
+| `python port_weights.py --verify` | Also runs the original Keras model and prints the max output difference. |
+
+### Training the paper's models
+
+```bash
+# s-TCN (use --nb_filters 64 for b-TCN)
+python train_torch.py --nb_filters 16 --kernel_size 2 --n_layers 5 --total_epochs 30
+
+# s-LSTM (use --units 64 for b-LSTM); slow, because batch size 1 is sequential
+python train_torch.py --net_type lstm --units 16 --n_hidden 3 --optimizer RMSprop --stateful --batch_size 1
+```
+
+Each run writes to `Results/` (named after its settings, e.g. `tcn_20_16_2_1_5`):
+- `ckpts/<run>/epoch_XXXX.pt` every `--save_every` epochs, plus `final.pt`
+- `CsvResults/<run>/csv_result.csv` with per-epoch train/validation loss, RMSE and MAPE
+
+The MAPE in the training log is on normalized power. Use `evaluate_torch.py` for numbers comparable to the paper.
+
+### Useful options
+
+| Option | Script | Meaning |
+|---|---|---|
+| `-m` | evaluate | Model names (`b-TCN`, `s-TCN`, `b-LSTM`, `s-LSTM`, `all`) or `.pt` paths |
+| `-e` | evaluate | Flight sets: `train`, `val`, `test`, `random`, `all` |
+| `--net_type` | train | `tcn` or `lstm` |
+| `--nb_filters`, `--kernel_size`, `--n_layers`, `--nb_stacks` | train | TCN size (dilations 1, 2, …, 2^(n_layers−1)) |
+| `--units`, `--n_hidden`, `--stateful` | train | LSTM size, number of layers, carry state across batches |
+| `--total_epochs`, `--batch_size`, `--optimizer`, `--dropout` | train | Training settings (optimizer: `Adam`, `RMSprop`, `SGD`) |
+| `--save_every`, `--seed`, `--device` | train | Checkpoint interval, random seed, `cuda` or `cpu` |
+| `-d`, `-o` | both | Data directory and output directory (default `./`) |
+
+## Files
+
+| File | Contents |
+|---|---|
+| `torch_model.py` | The model (`DeepEnergyModel`, TCN, residual block) and the pretrained configs |
+| `torch_data.py` | Turns flights into tensors, batching, prediction, metrics |
+| `train_torch.py` | Training script (PyTorch version of `train.py`) |
+| `evaluate_torch.py` | Evaluation script (PyTorch version of `evaluation.py`) |
+| `port_weights.py` | Keras checkpoint → PyTorch converter |
+| `models_torch/` | The four converted pretrained models |
+
+---
+
+# Original README
+
 # CVaR-based Flight Energy Risk Assessment for Multirotor UAVs using a Deep Energy Model
 This repository contains the code for the ICRA 2021 paper :
 
