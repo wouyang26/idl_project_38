@@ -1,6 +1,7 @@
-"""PyTorch version of `train.py`. Same arguments, plus --n_hidden, --save_every, --device and --seed.
+"""PyTorch version of `train.py`. Same arguments, plus --n_hidden, --save_every, --device, --seed and --split.
 
     python train_torch.py --net_type tcn --nb_filters 16 --kernel_size 2 --n_layers 5 --total_epochs 100
+    python train_torch.py --nb_filters 16 --kernel_size 2 --n_layers 5 --total_epochs 30 --split speed12
     python train_torch.py --net_type lstm --units 16 --n_hidden 3 --optimizer RMSprop --stateful --batch_size 1
 
 Differences from train.py:
@@ -19,6 +20,7 @@ import torch
 import torch.nn.functional as F
 
 from data_utils import get_dataset, load_dataset, process_data
+from splits import SPLITS, get_split
 from torch_data import create_tensors, iterate_batches, predict_flight, regression_metrics
 from torch_model import build_model, load_inputs
 
@@ -83,6 +85,7 @@ if __name__ == '__main__':
     parser.add_argument('--save_every', default=10, type=int, help='Save a checkpoint every this many epochs.')
     parser.add_argument('--device', default='cuda' if torch.cuda.is_available() else 'cpu')
     parser.add_argument('--seed', default=0, type=int, help='Seed for the weight initialization / dropout.')
+    parser.add_argument('--split', default='random', choices=SPLITS, help='Flight split (see splits.py); held-out splits test on unseen conditions.')
     args = parser.parse_args()
 
     directory = os.path.join(args.directory, '')
@@ -98,7 +101,8 @@ if __name__ == '__main__':
     inputs = load_inputs(**config)
     stateful = inputs['net_type'] == 'lstm' and inputs['stateful']
 
-    data, data_min, data_max, test_range, train_range, val_range = process_data(all_data, **inputs)
+    ranges = get_split(all_data, inputs['split'], directory + 'data/')
+    data, data_min, data_max, test_range, train_range, val_range = process_data(all_data, ranges=ranges, **inputs)
     train_tensors = create_tensors(data, train_range, device=args.device, **inputs)
     val_tensors = create_tensors(data, val_range, device=args.device, **inputs)
     train_range = np.array([f for f in train_range if f in train_tensors])
@@ -107,6 +111,10 @@ if __name__ == '__main__':
         save_str = '{net_type}_{lookback}_{dropout}_{units}_{n_hidden}_{optimizer}'.format(**inputs)
     else:
         save_str = '{net_type}_{lookback}_{nb_filters}_{kernel_size}_{nb_stacks}_{n_layers}'.format(**inputs)
+    if inputs['split'] != 'random':  # keep the original names for the paper's split
+        save_str += '_' + inputs['split']
+    if args.seed != 0:
+        save_str += '_s{}'.format(args.seed)
     output_dir = os.path.join(args.output, 'Results')
     ckpt_dir = Path(output_dir, 'ckpts', save_str)
     csv_dir = Path(output_dir, 'CsvResults', save_str)
@@ -116,13 +124,15 @@ if __name__ == '__main__':
     model = build_model(inputs).to(args.device)
     optimizer = OPTIMIZERS[inputs['optimizer']](model.parameters())
     print(model)
-    print('{:,} parameters, training on {} flights, validating on {}'.format(
-        sum(p.numel() for p in model.parameters()), len(train_tensors), len(val_tensors)))
+    print('{:,} parameters, split {!r}: training on {} flights, validating on {}, testing on {}'.format(
+        sum(p.numel() for p in model.parameters()), inputs['split'], len(train_tensors), len(val_tensors),
+        len(set(test_range))))
 
     def save(path):
-        # everything needed to rebuild the model and undo the power normalization
+        # everything needed to rebuild the model, redo the input normalization and know its test flights
         torch.save({'inputs': inputs, 'state_dict': model.state_dict(),
-                    'data_min': data_min.tolist(), 'data_max': data_max.tolist()}, path)
+                    'data_min': data_min.tolist(), 'data_max': data_max.tolist(), 'seed': args.seed,
+                    'ranges': {k: [int(f) for f in r] for k, r in zip(['test', 'val', 'train'], ranges)}}, path)
 
     save(ckpt_dir / 'epoch_0000.pt')
     history = []
