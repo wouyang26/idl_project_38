@@ -7,6 +7,7 @@ openpyxl==3.1.5
 ruptures==1.1.10
 metar==2.0.1
 tabulate==0.10.0
+matplotlib==3.11.2  # plot_results.py only
 
 # only for port_weights.py (reading the Keras checkpoints / --verify)
 tensorflow-cpu==2.21.0
