@@ -25,8 +25,9 @@ FIRST = 19  # lookback - 1, as in evaluate_torch.py
 
 def predict_watts(path, all_data, flights, device):
     """{flight: predicted power in W} for one checkpoint."""
-    model, inputs, _ = load_model(path, map_location=device)
-    data, data_min, data_max, _, _, _ = process_data(all_data, **inputs)
+    model, inputs, ckpt = load_model(path, map_location=device)
+    stats = (ckpt['data_min'], ckpt['data_max']) if 'data_min' in ckpt else None  # see evaluate_torch.py
+    data, data_min, data_max, _, _, _ = process_data(all_data, stats=stats, **inputs)
     tensors = create_tensors(data, flights, device=device, **inputs)
     return {f: predict_flight(model, *tensors[f][:2], inputs['batch_size'], inputs['stateful'])
             * (data_max[-1] - data_min[-1]) + data_min[-1] for f in flights}

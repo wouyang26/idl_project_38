@@ -3,6 +3,7 @@
     python evaluate_torch.py                                  # b-TCN on the test flights
     python evaluate_torch.py -m all -e random test            # README table
     python evaluate_torch.py -m Results/ckpts/<save_str>/final.pt
+    python evaluate_torch.py -m s-TCN Results/ckpts/tcn_20_16_2_1_5_speed12/final.pt -e speed12   # held-out 12 m/s flights
 """
 import argparse
 import os
@@ -14,13 +15,18 @@ from scipy.integrate import simpson
 from tabulate import tabulate
 
 from data_utils import find_regimes, get_flights_and_ranges, get_random_flights, load_dataset, process_data
+from splits import SPLITS, get_split
 from torch_data import create_tensors, predict_flight
 from torch_model import PRETRAINED_CONFIGS, load_model
 
 
-def get_flights(all_data):
+def get_flights(all_data, data_dir='./data/'):
+    """Flight sets by name: the paper's train/val/test/random, plus the test flights of each held-out split."""
     _, _, _, test_range, val_range, train_range = get_flights_and_ranges(all_data)
-    return {'train': train_range, 'test': test_range, 'val': val_range, 'random': get_random_flights()}
+    flights = {'train': train_range, 'test': test_range, 'val': val_range, 'random': get_random_flights()}
+    for split in SPLITS[1:]:
+        flights[split] = get_split(all_data, split, data_dir)[0]
+    return flights
 
 
 def simps_avg(y, x):
@@ -45,7 +51,8 @@ if __name__ == '__main__':
     parser.add_argument('-m', '--model', default=['b-TCN'], nargs='*',
                         help='Pretrained name(s) (b-TCN, s-TCN, b-LSTM, s-LSTM, all) or path(s) to .pt checkpoints.')
     parser.add_argument('--models_dir', default='./models_torch', help='Where port_weights.py saved the pretrained models.')
-    parser.add_argument('-e', '--evaluate', default=['test'], nargs='*', choices=['train', 'test', 'val', 'random', 'all'])
+    parser.add_argument('-e', '--evaluate', default=['test'], nargs='*', choices=['train', 'test', 'val', 'random', 'all'] + SPLITS[1:],
+                        help='Flight sets; a held-out split name (e.g. speed12) means that split\'s test flights.')
     parser.add_argument('--device', default='cuda' if torch.cuda.is_available() else 'cpu')
     args = parser.parse_args()
 
@@ -53,7 +60,7 @@ if __name__ == '__main__':
     datasets = ['train', 'test', 'val', 'random'] if 'all' in args.evaluate else list(dict.fromkeys(args.evaluate))
 
     all_data = load_dataset(os.path.join(args.directory, 'data/'))
-    flight_ranges = get_flights(all_data)
+    flight_ranges = get_flights(all_data, os.path.join(args.directory, 'data/'))
     eval_range = list(np.unique(np.concatenate([flight_ranges[d] for d in datasets])))
 
     first = 19  # lookback - 1
@@ -67,8 +74,11 @@ if __name__ == '__main__':
     rows = []
     for name in models:
         path = name if os.path.exists(name) else os.path.join(args.models_dir, name + '.pt')
-        model, inputs, _ = load_model(path, map_location=args.device)
-        data, data_min, data_max, _, _, _ = process_data(all_data, **inputs)
+        model, inputs, ckpt = load_model(path, map_location=args.device)
+        # normalize with the stats the model was trained with (the ported pretrained models don't store them,
+        # but were trained on the random split, which is what process_data recomputes by default)
+        stats = (ckpt['data_min'], ckpt['data_max']) if 'data_min' in ckpt else None
+        data, data_min, data_max, _, _, _ = process_data(all_data, stats=stats, **inputs)
         tensors = create_tensors(data, eval_range, device=args.device, **inputs)
 
         mape, re = {}, {}
