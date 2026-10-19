@@ -171,12 +171,21 @@ Payload is stored in kg (0, 0.25, 0.5) in `processed.csv`.
 | Split | Test flights (held out) | Train | Val | Test | What it tests |
 |---|---|---|---|---|---|
 | `random` | the paper's split | 114 | 38 | 35 | baseline (same as above) |
-| `payload500` | all 500 g flights | 91 | 31 | 64 | extrapolation to a heavier payload |
-| `payload250` | all 250 g flights | 94 | 32 | 61 | interpolation between 0 and 500 g |
-| `speed12` | all 12 m/s flights | 111 | 38 | 37 | extrapolation to a faster flight |
-| `alt100` | all 100 m flights | 104 | 35 | 45 | extrapolation to a higher altitude |
-| `route` | the 10 flights off route 5 | 132 | 45 | 10 | a new route (the paper's "random" flights) |
+| `payload500` | all 500 g flights | 87 | 30 | 59 | extrapolation to a heavier payload |
+| `payload250` | all 250 g flights | 88 | 30 | 59 | interpolation between 0 and 500 g |
+| `speed12` | all 12 m/s flights | 105 | 35 | 36 | extrapolation to a faster flight |
+| `alt100` | all 100 m flights | 99 | 33 | 44 | extrapolation to a higher altitude |
+| `route` | all flights off the main route | 132 | 45 | 10 | a new route (the paper's "random" flights) |
 
+Sizes are with routes from the flight sheet (the fallback, see below). With KiltHub routes, 276 and 277 move
+to the main route: `route` tests on 8 flights, and the payload500 / alt100 / speed12 sizes shift by a flight or two.
+
+- **Routes:** the payload, speed and altitude splits use main-route flights only, so off-route flights are tested
+  in `route` and nowhere else. The flight sheet labels 276 and 277 "Test", but KiltHub's `parameters.csv`
+  (Rodrigues et al. 2021) lists them on the main route. `splits.py` uses `data/kilthub/parameters.csv` when its
+  checksum matches the published one, or tries to download it. If both fail, it falls back to the flight sheet
+  and prints a warning. The main route is the most common route label in whichever source is used.
+  **Teammates should use the same source**, or their `route` splits will differ.
 - The validation set is drawn (seed 42, 25 %) from the training conditions only, so model selection never sees the
   held-out condition. Every flight appears at most once.
 - `alt100` drops the 2 mixed-altitude flights (25-50-100-25 m), which also fly at 100 m.
