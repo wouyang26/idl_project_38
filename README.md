@@ -16,7 +16,18 @@ pip install -r <(grep -v keras-tcn requirements-torch.txt)
 pip install --no-deps keras-tcn==3.1.1   # only needed for port_weights.py --verify
 ```
 
+Without conda, a venv with any Python ≥ 3.12 works (3.10 cannot install the pinned numpy). On a machine
+without a GPU, the CPU build of torch is a much smaller download:
+
+```bash
+python3.13 -m venv .venv && source .venv/bin/activate
+pip install --extra-index-url https://download.pytorch.org/whl/cpu -r <(grep -vE 'keras-tcn|tensorflow|tf-keras' requirements-torch.txt)
+```
+
 Get the dataset (once): `python train_torch.py -D --total_epochs 0`, which downloads and unzips it into `./data/`.
+
+The TCNs train fine on a CPU: the 30-epoch s-TCN below took about 10 minutes on 8 cores. The stateful LSTMs
+(batch size 1) are slow on any hardware.
 
 ## Commands
 
@@ -26,6 +37,7 @@ Get the dataset (once): `python train_torch.py -D --total_epochs 0`, which downl
 | `python evaluate_torch.py -m all -e random test` | Reproduces the paper's table for all four pretrained models. |
 | `python evaluate_torch.py -m s-TCN Results/ckpts/<run>/final.pt -e random test` | Compares your own trained checkpoint with a pretrained model. |
 | `python train_torch.py` | Trains a TCN with the default settings (32 filters, kernel 3, 4 layers, 10 epochs). |
+| `python plot_results.py -c Results/ckpts/<run>/final.pt -p s-TCN --out docs/<run>` | Training curves, per-flight test MAPE and example flights for a checkpoint vs a pretrained model. |
 | `python port_weights.py` | Converts the Keras checkpoints in `models/` to `models_torch/*.pt`. Already done; needs TensorFlow. |
 | `python port_weights.py --verify` | Also runs the original Keras model and prints the max output difference. |
 
@@ -50,7 +62,8 @@ The MAPE in the training log is on normalized power. Use `evaluate_torch.py` for
 | Option | Script | Meaning |
 |---|---|---|
 | `-m` | evaluate | Model names (`b-TCN`, `s-TCN`, `b-LSTM`, `s-LSTM`, `all`) or `.pt` paths |
-| `-e` | evaluate | Flight sets: `train`, `val`, `test`, `random`, `all` |
+| `-e` | evaluate | Flight sets: `train`, `val`, `test`, `random`, `all`, or a held-out split name (its test flights) |
+| `--split` | train | `random` (paper), `payload500`, `payload250`, `speed12`, `alt100`, `route`; see [Held-out splits](#held-out-splits) |
 | `--net_type` | train | `tcn` or `lstm` |
 | `--nb_filters`, `--kernel_size`, `--n_layers`, `--nb_stacks` | train | TCN size (dilations 1, 2, …, 2^(n_layers−1)) |
 | `--units`, `--n_hidden`, `--stateful` | train | LSTM size, number of layers, carry state across batches |
@@ -67,7 +80,156 @@ The MAPE in the training log is on normalized power. Use `evaluate_torch.py` for
 | `train_torch.py` | Training script (PyTorch version of `train.py`) |
 | `evaluate_torch.py` | Evaluation script (PyTorch version of `evaluation.py`) |
 | `port_weights.py` | Keras checkpoint → PyTorch converter |
+| `plot_results.py` | Figures and per-flight metrics for a trained checkpoint (the baseline results below) |
+| `splits.py` | Train/val/test splits, including the held-out operating-condition splits (`python splits.py` prints them) |
 | `models_torch/` | The four converted pretrained models |
+| `docs/baseline/` | Figures, `per_flight_metrics.csv` and `train_log.txt` for the 30-epoch s-TCN baseline |
+
+## Baseline results: s-TCN, 30 epochs
+
+Trained from scratch with the paper's s-TCN settings (seed 0, Adam lr 1e-3, batch 32, lookback 20, 5,225 parameters, 114 training / 38 validation flights):
+
+```bash
+python train_torch.py --nb_filters 16 --kernel_size 2 --n_layers 5 --total_epochs 30
+python evaluate_torch.py -m s-TCN Results/ckpts/tcn_20_16_2_1_5/final.pt -e random test
+python plot_results.py
+```
+
+| Model | random: MAPE % / RE % | test: MAPE % / RE % |
+|---|---|---|
+| Pretrained s-TCN (paper checkpoint) | 10.36 / 7.99 | 9.13 / 5.75 |
+| **Ours, 30 epochs** | **9.67 / 6.55** | **8.76 / 4.83** |
+
+MAPE is the per-step power error and RE the per-regime energy error, each averaged per flight and then over flights,
+exactly as in the paper's table. The retrained model reproduces the paper and is slightly better on both sets. This is
+one seed only, so the gap (≈0.4–0.7 MAPE points) is within what seed-to-seed variation could explain.
+
+### Training curves
+
+![training curves](docs/baseline/training_curves.png)
+
+Validation MAPE (on normalized power) falls from 18.9 after epoch 1 to 7.48 at epoch 30, and is still creeping down,
+so a few more epochs may help slightly. There is no sign of overfitting: the validation loss tracks the training loss.
+
+### Per-flight test error
+
+![per-flight MAPE](docs/baseline/per_flight_mape.png)
+
+Test-flight MAPE ranges from 5.2 % to 16.8 % (median 8.1 %). Our model beats the pretrained one on 26 of 35 flights.
+The 10 "random" flights (`*`) are not randomly drawn: they are the flights on the *other* routes (the long route
+268–273 and the test route 276–279). They are harder than the route-5 test flights (9.67 vs 8.19 % MAPE), which is
+already a small generalization gap.
+
+Mean test MAPE by condition (ours / pretrained):
+
+| Payload | 0 g | 250 g | 500 g |
+|---|---|---|---|
+| MAPE % | 9.73 / 10.10 | 7.88 / 8.26 | 8.29 / 8.65 |
+
+| Speed | 4 m/s | 6 m/s | 8 m/s | 10 m/s | 12 m/s |
+|---|---|---|---|---|---|
+| MAPE % | 7.99 / 8.49 | 7.51 / 7.66 | 7.36 / 7.68 | 9.55 / 9.95 | 9.55 / 9.94 |
+| Test flights | 6 | 5 | 6 | 11 | 7 |
+
+Faster flights (10–12 m/s) are about 2 points worse. These are test flights whose conditions *also* appear in
+training, so they are not yet the held-out stress test.
+
+### Example flights
+
+Best (195: 250 g, 8 m/s), median (155: 500 g, 12 m/s) and worst (79: 0 g, 10 m/s) test flights by our MAPE.
+Dotted lines are the regime change points used for the energy RE.
+
+![example flights](docs/baseline/example_flights.png)
+
+| Flight | Duration | Energy | Pretrained MAPE / RE | Ours MAPE / RE |
+|---|---|---|---|---|
+| 195 (best) | 144 s | 73.9 kJ | 5.99 / 3.58 | 5.25 / 2.97 |
+| 155 (median) | 135 s | 79.4 kJ | 8.07 / 1.48 | 8.14 / 1.97 |
+| 79 (worst) | 99 s | 45.2 kJ | 18.66 / 14.18 | 16.85 / 9.62 |
+
+Both models follow the regime changes (take-off, cruise, turns, descent) and the spikes well. They mainly miss the
+high-frequency noise, which is not predictable from the inputs. On flight 79, both overpredict for 20–40 s and
+underpredict for 55–70 s, a sustained bias (most likely wind) rather than noise. That is the kind of error an
+uncertainty estimate should flag.
+
+## Dataset coverage
+
+187 flights have data: route 5 (177 flights, the full payload × altitude × speed grid), the new long route (6) and
+the test route (4). Counts are from `data/Flight Sheet.xlsx`:
+
+| Payload | 0 g: 61 | 250 g: 61 | 500 g: 65 | | |
+|---|---|---|---|---|---|
+| **Speed** | 4 m/s: 36 | 6 m/s: 37 | 8 m/s: 34 | 10 m/s: 42 | 12 m/s: 38 |
+| **Altitude** | 25 m: 47 | 50 m: 47 | 75 m: 45 | 100 m: 46 | mixed: 2 |
+
+Payload is stored in kg (0, 0.25, 0.5) in `processed.csv`.
+
+## Held-out splits
+
+`--split` trains on all flights *except* one operating condition and tests on that condition (`splits.py`):
+
+| Split | Test flights (held out) | Train | Val | Test | What it tests |
+|---|---|---|---|---|---|
+| `random` | the paper's split | 114 | 38 | 35 | baseline (same as above) |
+| `payload500` | all 500 g flights | 87 | 30 | 59 | extrapolation to a heavier payload |
+| `payload250` | all 250 g flights | 88 | 30 | 59 | interpolation between 0 and 500 g |
+| `speed12` | all 12 m/s flights | 105 | 35 | 36 | extrapolation to a faster flight |
+| `alt100` | all 100 m flights | 99 | 33 | 44 | extrapolation to a higher altitude |
+| `route` | all flights off the main route | 132 | 45 | 10 | a new route (the paper's "random" flights) |
+
+Sizes are with routes from the flight sheet (the fallback, see below). With KiltHub routes, 276 and 277 move
+to the main route: `route` tests on 8 flights, and the payload500 / alt100 / speed12 sizes shift by a flight or two.
+
+- **Routes:** the payload, speed and altitude splits use main-route flights only, so off-route flights are tested
+  in `route` and nowhere else. The flight sheet labels 276 and 277 "Test", but KiltHub's `parameters.csv`
+  (Rodrigues et al. 2021) lists them on the main route. `splits.py` uses `data/kilthub/parameters.csv` when its
+  checksum matches the published one, or tries to download it. If both fail, it falls back to the flight sheet
+  and prints a warning. The main route is the most common route label in whichever source is used.
+  **Teammates should use the same source**, or their `route` splits will differ.
+- The validation set is drawn (seed 42, 25 %) from the training conditions only, so model selection never sees the
+  held-out condition. Every flight appears at most once.
+- `alt100` drops the 2 mixed-altitude flights (25-50-100-25 m), which also fly at 100 m.
+- Flight 232 (500 g, 12 m/s, 100 m) is never a held-out test flight. Its last ~80 logged steps are after the
+  motors stop (power ≤ 0 W), which makes its MAPE infinite. It stays in training wherever its condition is not held out.
+- Checkpoints store their split, seed, flight lists and normalization stats. `evaluate_torch.py` and
+  `plot_results.py` normalize with the checkpoint's own stats; the ported pretrained models don't store them and
+  fall back to the random split, which is what they were trained on. This does not change the baseline numbers.
+- Payload and density are fed to the model unnormalized (raw kg and kg/m³), so a held-out payload is just an
+  unseen input value. The airspeed range barely shrinks when 12 m/s is held out (max 17.2 vs 18.1 m/s, since
+  measured airspeed includes wind), so `speed12` is a milder extrapolation than it sounds.
+
+Run names get a `_<split>` suffix (and `_s<seed>` for seeds other than 0), e.g. `tcn_20_16_2_1_5_speed12`:
+
+```bash
+for split in payload500 payload250 speed12 alt100 route; do
+  python train_torch.py --nb_filters 16 --kernel_size 2 --n_layers 5 --total_epochs 30 --split $split
+done
+python evaluate_torch.py -m s-TCN Results/ckpts/tcn_20_16_2_1_5_speed12/final.pt -e speed12
+```
+
+The pretrained s-TCN row is an *in-distribution* reference: it was trained on the random split, which includes
+most flights of every condition.
+
+## Known quirks
+
+- **Learning rate:** `train.py` passes the optimizer by name, so Adam uses the Keras default lr = 1e-3 (not 0.002).
+  `train_torch.py` matches that; there is no `--lr` flag yet.
+- **Duplicate test flights:** `get_flights_and_ranges` draws the random test flights without first excluding the
+  10 fixed ones, so 269 and 278 appear twice in the 37-entry test list (35 unique flights). The paper's test numbers
+  and `evaluate_torch.py` average over the list with duplicates; the tables above do too.
+- **Training-log MAPE** is on min-max normalized power, so it is not comparable to the paper's MAPE.
+
+## Next steps (from the project proposal)
+
+Before the midterm:
+1. **Finish the baselines:** train b-TCN and s-/b-LSTM from scratch, run 3–5 seeds per model (report mean ± std), and
+   evaluate the Liu physics model (`liu_model.py`) with the same per-flight MAPE/RE code.
+2. ~~**Held-out splits**~~: done, see [Held-out splits](#held-out-splits).
+3. **Stress test:** train every baseline on every split (several seeds) and plot error against the held-out
+   condition, next to the in-distribution error on the same flights.
+
+After the midterm: the physics + TCN hybrid (ŷ = P_Liu + g_θ), a small transformer, uncertainty estimation
+(variance head, deep ensemble, MC dropout; target ≈90 % coverage of the 90 % intervals), and CVaR with model uncertainty.
 
 ---
 

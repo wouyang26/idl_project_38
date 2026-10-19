@@ -1,0 +1,72 @@
+DeepEnergyModel(
+  (backbone): ModuleList(
+    (0): TCN(
+      (blocks): Sequential(
+        (0): ResidualBlock(
+          (conv0): Conv1d(5, 16, kernel_size=(2,), stride=(1,))
+          (conv1): Conv1d(16, 16, kernel_size=(2,), stride=(1,))
+          (dropout): Dropout1d(p=0.0, inplace=False)
+          (shape_match_conv): Conv1d(5, 16, kernel_size=(1,), stride=(1,))
+        )
+        (1): ResidualBlock(
+          (conv0): Conv1d(16, 16, kernel_size=(2,), stride=(1,), dilation=(2,))
+          (conv1): Conv1d(16, 16, kernel_size=(2,), stride=(1,), dilation=(2,))
+          (dropout): Dropout1d(p=0.0, inplace=False)
+          (shape_match_conv): Identity()
+        )
+        (2): ResidualBlock(
+          (conv0): Conv1d(16, 16, kernel_size=(2,), stride=(1,), dilation=(4,))
+          (conv1): Conv1d(16, 16, kernel_size=(2,), stride=(1,), dilation=(4,))
+          (dropout): Dropout1d(p=0.0, inplace=False)
+          (shape_match_conv): Identity()
+        )
+        (3): ResidualBlock(
+          (conv0): Conv1d(16, 16, kernel_size=(2,), stride=(1,), dilation=(8,))
+          (conv1): Conv1d(16, 16, kernel_size=(2,), stride=(1,), dilation=(8,))
+          (dropout): Dropout1d(p=0.0, inplace=False)
+          (shape_match_conv): Identity()
+        )
+        (4): ResidualBlock(
+          (conv0): Conv1d(16, 16, kernel_size=(2,), stride=(1,), dilation=(16,))
+          (conv1): Conv1d(16, 16, kernel_size=(2,), stride=(1,), dilation=(16,))
+          (dropout): Dropout1d(p=0.0, inplace=False)
+          (shape_match_conv): Identity()
+        )
+      )
+    )
+  )
+  (power_embedding): Linear(in_features=18, out_features=10, bias=True)
+  (power_reg): Linear(in_features=10, out_features=1, bias=True)
+)
+5,225 parameters, training on 114 flights, validating on 38
+epoch    1 | train loss 0.019425 rmse 0.0887 mape    13.19 | val loss 0.016433 rmse 0.1252 mape    18.92
+epoch    2 | train loss 0.004450 rmse 0.0640 mape     9.43 | val loss 0.004137 rmse 0.0626 mape     8.75
+epoch    3 | train loss 0.003890 rmse 0.0604 mape     8.87 | val loss 0.003920 rmse 0.0608 mape     8.43
+epoch    4 | train loss 0.003862 rmse 0.0601 mape     8.82 | val loss 0.004831 rmse 0.0677 mape     9.18
+epoch    5 | train loss 0.003778 rmse 0.0595 mape     8.74 | val loss 0.004116 rmse 0.0630 mape     9.65
+epoch    6 | train loss 0.003606 rmse 0.0581 mape     8.50 | val loss 0.004508 rmse 0.0657 mape     9.05
+epoch    7 | train loss 0.003501 rmse 0.0572 mape     8.37 | val loss 0.004265 rmse 0.0635 mape     8.74
+epoch    8 | train loss 0.003367 rmse 0.0561 mape     8.19 | val loss 0.003623 rmse 0.0587 mape     8.44
+epoch    9 | train loss 0.003368 rmse 0.0561 mape     8.22 | val loss 0.003454 rmse 0.0574 mape     8.15
+epoch   10 | train loss 0.003237 rmse 0.0553 mape     8.07 | val loss 0.003496 rmse 0.0580 mape     8.59
+epoch   11 | train loss 0.003213 rmse 0.0548 mape     8.03 | val loss 0.003375 rmse 0.0567 mape     8.03
+epoch   12 | train loss 0.003246 rmse 0.0551 mape     8.05 | val loss 0.003924 rmse 0.0611 mape     8.28
+epoch   13 | train loss 0.003170 rmse 0.0545 mape     7.98 | val loss 0.003348 rmse 0.0563 mape     7.84
+epoch   14 | train loss 0.003035 rmse 0.0534 mape     7.80 | val loss 0.003482 rmse 0.0575 mape     7.89
+epoch   15 | train loss 0.003034 rmse 0.0533 mape     7.81 | val loss 0.003636 rmse 0.0587 mape     8.03
+epoch   16 | train loss 0.003096 rmse 0.0538 mape     7.85 | val loss 0.004236 rmse 0.0637 mape     9.64
+epoch   17 | train loss 0.003011 rmse 0.0530 mape     7.74 | val loss 0.003294 rmse 0.0561 mape     7.77
+epoch   18 | train loss 0.003005 rmse 0.0532 mape     7.80 | val loss 0.003162 rmse 0.0547 mape     7.67
+epoch   19 | train loss 0.003046 rmse 0.0533 mape     7.81 | val loss 0.003087 rmse 0.0541 mape     7.59
+epoch   20 | train loss 0.003001 rmse 0.0532 mape     7.81 | val loss 0.003090 rmse 0.0543 mape     7.73
+epoch   21 | train loss 0.002876 rmse 0.0520 mape     7.61 | val loss 0.003131 rmse 0.0548 mape     7.97
+epoch   22 | train loss 0.002875 rmse 0.0520 mape     7.61 | val loss 0.003385 rmse 0.0567 mape     7.81
+epoch   23 | train loss 0.002872 rmse 0.0521 mape     7.65 | val loss 0.003511 rmse 0.0578 mape     7.97
+epoch   24 | train loss 0.002915 rmse 0.0523 mape     7.65 | val loss 0.003860 rmse 0.0612 mape     9.26
+epoch   25 | train loss 0.002840 rmse 0.0518 mape     7.61 | val loss 0.003234 rmse 0.0555 mape     7.67
+epoch   26 | train loss 0.002882 rmse 0.0520 mape     7.63 | val loss 0.003519 rmse 0.0577 mape     7.89
+epoch   27 | train loss 0.002847 rmse 0.0518 mape     7.61 | val loss 0.003076 rmse 0.0542 mape     7.69
+epoch   28 | train loss 0.002839 rmse 0.0517 mape     7.59 | val loss 0.003098 rmse 0.0544 mape     7.95
+epoch   29 | train loss 0.002832 rmse 0.0517 mape     7.58 | val loss 0.003243 rmse 0.0559 mape     8.20
+epoch   30 | train loss 0.002822 rmse 0.0515 mape     7.54 | val loss 0.002956 rmse 0.0530 mape     7.48
+saved Results/ckpts/tcn_20_16_2_1_5/final.pt and Results/CsvResults/tcn_20_16_2_1_5/csv_result.csv
