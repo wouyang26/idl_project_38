@@ -34,7 +34,8 @@ The TCNs train fine on a CPU: the 30-epoch s-TCN below took about 10 minutes on 
 | Command | What it does |
 |---|---|
 | `python evaluate_torch.py` | Scores the pretrained b-TCN on the test flights: power MAPE % / energy error RE %. |
-| `python evaluate_torch.py -m all -e random test` | Reproduces the paper's table for all four pretrained models. |
+| `python evaluate_torch.py -m all -e random test` | Reproduces the paper's table for all four pretrained models and physics model. |
+| `python evaluate_torch.py -m liu -e random test` | Scores the Liu physics model (the paper's baseline, with the authors' fixed constants). `-m all` includes it. |
 | `python evaluate_torch.py -m s-TCN Results/ckpts/<run>/final.pt -e random test` | Compares your own trained checkpoint with a pretrained model. |
 | `python train_torch.py` | Trains a TCN with the default settings (32 filters, kernel 3, 4 layers, 10 epochs). |
 | `python plot_results.py -c Results/ckpts/<run>/final.pt -p s-TCN --out docs/<run>` | Training curves, per-flight test MAPE and example flights for a checkpoint vs a pretrained model. |
@@ -61,7 +62,7 @@ The MAPE in the training log is on normalized power. Use `evaluate_torch.py` for
 
 | Option | Script | Meaning |
 |---|---|---|
-| `-m` | evaluate | Model names (`b-TCN`, `s-TCN`, `b-LSTM`, `s-LSTM`, `all`) or `.pt` paths |
+| `-m` | evaluate | Model names (`b-TCN`, `s-TCN`, `b-LSTM`, `s-LSTM`, `liu`, `all`) or `.pt` paths |
 | `-e` | evaluate | Flight sets: `train`, `val`, `test`, `random`, `all`, or a held-out split name (its test flights) |
 | `--split` | train | `random` (paper), `payload500`, `payload250`, `speed12`, `alt100`, `route`; see [Held-out splits](#held-out-splits) |
 | `--net_type` | train | `tcn` or `lstm` |
@@ -209,6 +210,26 @@ python evaluate_torch.py -m s-TCN Results/ckpts/tcn_20_16_2_1_5_speed12/final.pt
 
 The pretrained s-TCN row is an *in-distribution* reference: it was trained on the random split, which includes
 most flights of every condition.
+
+### Liu model on the held-out splits
+
+```bash
+python evaluate_torch.py -m liu -e random test payload500 payload250 speed12 alt100 route
+```
+
+| | random | test | payload500 | payload250 | speed12 | alt100 | route |
+|---|---|---|---|---|---|---|---|
+| Liu MAPE % / RE % | 14.05 / 9.10 | 12.70 / 7.36 | 10.50 / 6.05 | 10.50 / 5.87 | 13.58 / 6.93 | 10.81 / 6.16 | 13.67 / 8.77 |
+
+Matches the paper's Liu numbers on `random` and `test`. Raw output: `docs/liu/liu_splits.txt`.
+
+- Liu is not trained, so these are not held-out results for Liu: it is the same formula on every split.
+  Each number is the physics reference for that split's test flights, the bar a held-out network should beat.
+- Liu's 5 constants were fitted by the authors, presumably on flights from all conditions, so Liu has a mild
+  advantage on every split. Refitting them on each split's training flights is a possible follow-up (and the
+  first step toward the physics + TCN hybrid).
+- `random` is the authors' 10 hardcoded flights, which include the two normal-route flights 276/277; `route` is the corrected 8.
+- Liu is worst at 12 m/s and off-route. One possible reason: its drag term grows with airspeed cubed.
 
 ## Known quirks
 
