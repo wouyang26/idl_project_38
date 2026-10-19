@@ -15,7 +15,7 @@ from scipy.integrate import simpson
 from tabulate import tabulate
 
 from data_utils import find_regimes, get_flights_and_ranges, get_random_flights, load_dataset, process_data
-from splits import SPLITS, get_split
+from splits import SPLITS, get_split, load_conditions
 from torch_data import create_tensors, predict_flight
 from torch_model import PRETRAINED_CONFIGS, load_model
 
@@ -24,8 +24,9 @@ def get_flights(all_data, data_dir='./data/'):
     """Flight sets by name: the paper's train/val/test/random, plus the test flights of each held-out split."""
     _, _, _, test_range, val_range, train_range = get_flights_and_ranges(all_data)
     flights = {'train': train_range, 'test': test_range, 'val': val_range, 'random': get_random_flights()}
+    cond = load_conditions(data_dir)
     for split in SPLITS[1:]:
-        flights[split] = get_split(all_data, split, data_dir)[0]
+        flights[split] = get_split(all_data, split, data_dir, cond=cond)[0]
     return flights
 
 
