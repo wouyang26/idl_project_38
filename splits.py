@@ -31,7 +31,7 @@ import pandas as pd
 
 from data_utils import get_flights_and_ranges
 
-SPLITS = ['random', 'payload500', 'payload250', 'speed12', 'alt100', 'route']
+SPLITS = ['random', 'payload500', 'payload250', 'speed12', 'alt100', 'route', 'random_subsampled']
 FLIGHT_SHEET = 'Flight Sheet.xlsx'
 NO_MAPE_FLIGHTS = [232]  # power <= 0 W at some steps; kept for training, never a held-out test flight
 
@@ -141,6 +141,15 @@ def get_split(all_data, split='random', data_dir='./data/', val_split=0.25, rand
     """
     if split == 'random':
         _, _, _, test_range, val_range, train_range = get_flights_and_ranges(all_data, val_split=val_split)
+        return test_range, val_range, train_range
+
+    if split == 'random_subsampled':
+        test_range, val_range, train_full = get_split(all_data, 'random', data_dir, val_split, random_seed)
+        if cond is None:
+            cond = load_conditions(data_dir)
+        n = len(get_split(all_data, 'payload500', data_dir, val_split, random_seed, cond)[2])
+        rng = np.random.RandomState(random_seed)
+        train_range = np.sort(rng.choice(train_full, size=n, replace=False))
         return test_range, val_range, train_range
 
     if cond is None:
