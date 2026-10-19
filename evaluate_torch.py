@@ -19,6 +19,8 @@ from splits import SPLITS, get_split, load_conditions
 from torch_data import create_tensors, predict_flight
 from torch_model import PRETRAINED_CONFIGS, load_model
 
+import liu_model
+
 
 def get_flights(all_data, data_dir='./data/'):
     """Flight sets by name: the paper's train/val/test/random, plus the test flights of each held-out split."""
@@ -50,14 +52,18 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('-d', '--directory', default='./', help='Working directory for data.')
     parser.add_argument('-m', '--model', default=['b-TCN'], nargs='*',
-                        help='Pretrained name(s) (b-TCN, s-TCN, b-LSTM, s-LSTM, all) or path(s) to .pt checkpoints.')
+                        help='Pretrained name(s) (b-TCN, s-TCN, b-LSTM, s-LSTM, liu, all) or path(s) to .pt checkpoints.')
     parser.add_argument('--models_dir', default='./models_torch', help='Where port_weights.py saved the pretrained models.')
     parser.add_argument('-e', '--evaluate', default=['test'], nargs='*', choices=['train', 'test', 'val', 'random', 'all'] + SPLITS[1:],
                         help='Flight sets; a held-out split name (e.g. speed12) means that split\'s test flights.')
     parser.add_argument('--device', default='cuda' if torch.cuda.is_available() else 'cpu')
     args = parser.parse_args()
 
-    models = list(PRETRAINED_CONFIGS) if 'all' in args.model else args.model
+    if 'all' in args.model:
+        models = list(PRETRAINED_CONFIGS)
+        models.append('liu')
+    else:
+        models = args.model
     datasets = ['train', 'test', 'val', 'random'] if 'all' in args.evaluate else list(dict.fromkeys(args.evaluate))
 
     all_data = load_dataset(os.path.join(args.directory, 'data/'))
@@ -74,18 +80,25 @@ if __name__ == '__main__':
 
     rows = []
     for name in models:
-        path = name if os.path.exists(name) else os.path.join(args.models_dir, name + '.pt')
-        model, inputs, ckpt = load_model(path, map_location=args.device)
-        # normalize with the stats the model was trained with (the ported pretrained models don't store them,
-        # but were trained on the random split, which is what process_data recomputes by default)
-        stats = (ckpt['data_min'], ckpt['data_max']) if 'data_min' in ckpt else None
-        data, data_min, data_max, _, _, _ = process_data(all_data, stats=stats, **inputs)
-        tensors = create_tensors(data, eval_range, device=args.device, **inputs)
+        if name == 'liu':
+            [k1, k2, c2, c4, c5] = liu_model.optimum_values()
+        else:
+            path = name if os.path.exists(name) else os.path.join(args.models_dir, name + '.pt')
+            model, inputs, ckpt = load_model(path, map_location=args.device)
+            # normalize with the stats the model was trained with (the ported pretrained models don't store them,
+            # but were trained on the random split, which is what process_data recomputes by default)
+            stats = (ckpt['data_min'], ckpt['data_max']) if 'data_min' in ckpt else None
+            data, data_min, data_max, _, _, _ = process_data(all_data, stats=stats, **inputs)
+            tensors = create_tensors(data, eval_range, device=args.device, **inputs)
 
         mape, re = {}, {}
         for flight in eval_range:
-            y_pred = predict_flight(model, *tensors[flight][:2], inputs['batch_size'], inputs['stateful'])
-            y_pred = y_pred * (data_max[-1] - data_min[-1]) + data_min[-1]
+            if name == 'liu':
+                liu_dataset = all_data[flight][['vertspd', 'airspeed', 'aoa', 'payload', 'density']].T
+                y_pred = liu_model.power(liu_dataset, k1, k2, c2, c4, c5)[first:]
+            else:
+                y_pred = predict_flight(model, *tensors[flight][:2], inputs['batch_size'], inputs['stateful'])
+                y_pred = y_pred * (data_max[-1] - data_min[-1]) + data_min[-1]
             true_w, true_e = truth[flight]
             mape[flight] = np.mean(np.abs((true_w - y_pred) / true_w)) * 100
             pred_e = calc_energy(y_pred, all_data[flight]['time'].values[first:], change_points[flight])
