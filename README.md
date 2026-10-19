@@ -64,6 +64,7 @@ The MAPE in the training log is on normalized power. Use `evaluate_torch.py` for
 |---|---|---|
 | `-m` | evaluate | Model names (`b-TCN`, `s-TCN`, `b-LSTM`, `s-LSTM`, `liu`, `all`) or `.pt` paths |
 | `-e` | evaluate | Flight sets: `train`, `val`, `test`, `random`, `all`, or a held-out split name (its test flights) |
+| `--unseen` | evaluate | Drop every flight any listed model trained or validated on, so all rows are scored on the same unseen flights (headers show `n`) |
 | `--split` | train | `random` (paper), `payload500`, `payload250`, `speed12`, `alt100`, `route`; see [Held-out splits](#held-out-splits) |
 | `--net_type` | train | `tcn` or `lstm` |
 | `--nb_filters`, `--kernel_size`, `--n_layers`, `--nb_stacks` | train | TCN size (dilations 1, 2, …, 2^(n_layers−1)) |
@@ -208,8 +209,10 @@ done
 python evaluate_torch.py -m s-TCN Results/ckpts/tcn_20_16_2_1_5_speed12/final.pt -e speed12
 ```
 
-The pretrained s-TCN row is an *in-distribution* reference: it was trained on the random split, which includes
-most flights of every condition.
+For an in-distribution reference, compare against the `random_subsampled` model with `--unseen`: both models are
+then scored only on held-out-condition flights that neither trained or validated on (e.g. 21 of the 500 g flights).
+Without `--unseen`, a random-split model has trained on most of a held-out split's test flights, so its error there
+is partly training error.
 
 ### Liu model on the held-out splits
 
