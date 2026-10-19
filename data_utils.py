@@ -241,19 +241,26 @@ def process_data(all_data,
                  tv=0,
                  test_split=0.2,
                  random_seed=42,
+                 ranges=None,
+                 stats=None,
                  **kwargs):
+    # ranges: optional (test_range, val_range, train_range), e.g. from `splits.get_split`
+    # stats: optional (data_min, data_max) to normalize with, e.g. the ones saved in a checkpoint
     # the normalize flag is just for the `power`. Input variables get normalized by default
     # the auto_reg flag includes the power in the input
     # this returns all the features, time variant or invariant
     # tv is the target value. 0 predicts one step into the future, -1 predicts 'in-step'
 
-    num_test_flights, num_val_flights, num_train_flights, test_range, val_range, train_range = get_flights_and_ranges(
-        all_data,
-        val_split=val_split,
-        test_split=test_split,
-        eval_mode=eval_mode,
-        random_seed=42,
-        **kwargs)
+    if ranges is not None:
+        test_range, val_range, train_range = ranges
+    else:
+        num_test_flights, num_val_flights, num_train_flights, test_range, val_range, train_range = get_flights_and_ranges(
+            all_data,
+            val_split=val_split,
+            test_split=test_split,
+            eval_mode=eval_mode,
+            random_seed=42,
+            **kwargs)
 
     # normalize only some of the parts (payload and density never get normalized)
     if normalize:
@@ -270,6 +277,8 @@ def process_data(all_data,
 
     data_min = dataset[:, normalize_cols].min(axis=0)
     data_max = dataset[:, normalize_cols].max(axis=0)
+    if stats is not None:
+        data_min, data_max = (np.asarray(s, dtype=float) for s in stats)
 
     data = {}
 
