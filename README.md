@@ -68,7 +68,7 @@ The MAPE in the training log is on normalized power. Use `evaluate_torch.py` for
 | `-m` | evaluate | Model names (`b-TCN`, `s-TCN`, `b-LSTM`, `s-LSTM`, `liu`, `all`) or `.pt` paths |
 | `-e` | evaluate | Flight sets: `train`, `val`, `test`, `random`, `all`, or a held-out split name (its test flights) |
 | `--unseen` | evaluate | Drop every flight any listed model trained or validated on, so all rows are scored on the same unseen flights (headers show `n`) |
-| `--split` | train | `random` (paper), `payload500`, `payload250`, `speed12`, `alt100`, `route`, `random_subsampled`; see [Held-out splits](#held-out-splits) |
+| `--split` | train | `random` (paper), `payload500`, `payload250`, `speed12`, `alt100`, `route`, `speed10-12`, `speed8-12`, or a control: `random_subsampled`, `random_sub_speed10-12`, `random_sub_speed8-12`; see [Held-out splits](#held-out-splits) |
 | `--net_type` | train | `tcn` or `lstm` |
 | `--nb_filters`, `--kernel_size`, `--n_layers`, `--nb_stacks` | train | TCN size (dilations 1, 2, …, 2^(n_layers−1)) |
 | `--units`, `--n_hidden`, `--stateful` | train | LSTM size, number of layers, carry state across batches |
@@ -182,9 +182,14 @@ Payload is stored in kg (0, 0.25, 0.5) in `processed.csv`.
 | `alt100` | all 100 m flights | 99 | 33 | 44 | extrapolation to a higher altitude |
 | `route` | all flights off the main route | 132 | 45 | 10 | a new route (the paper's "random" flights) |
 | `random_subsampled` | the paper's split | 87 | 38 | 35 | control: `random` with train cut to payload500's size |
+| `speed10-12` | all 10 and 12 m/s flights | 78 | 26 | 74 | wider speed extrapolation (train on 4–8 m/s) |
+| `speed8-12` | all 8, 10 and 12 m/s flights | 52 | 18 | 108 | widest speed extrapolation (train on 4–6 m/s) |
+| `random_sub_speed10-12` / `random_sub_speed8-12` | the paper's split | 78 / 52 | 38 | 35 | controls matched to the speed splits' train sizes |
 
-Sizes are with routes from the flight sheet (the fallback, see below). With KiltHub routes, 276 and 277 move
-to the main route: `route` tests on 8 flights, and the payload500 / alt100 / speed12 sizes shift by a flight or two.
+Sizes are with routes from the flight sheet (the fallback, see below), except the speed10-12 / speed8-12 rows and
+their controls, which use KiltHub routes. With KiltHub routes, 276 and 277 move to the main route: `route` tests on
+8 flights, and the payload500 / alt100 / speed12 sizes shift by a flight or two. `python splits.py` prints the
+exact sizes.
 
 - **Routes:** the payload, speed and altitude splits use main-route flights only, so off-route flights are tested
   in `route` and nowhere else. The flight sheet labels 276 and 277 "Test", but KiltHub's `parameters.csv`
@@ -197,10 +202,10 @@ to the main route: `route` tests on 8 flights, and the payload500 / alt100 / spe
 - `alt100` drops the 2 mixed-altitude flights (25-50-100-25 m), which also fly at 100 m.
 - Flight 232 (500 g, 12 m/s, 100 m) is never a held-out test flight. Its last ~80 logged steps are after the
   motors stop (power ≤ 0 W), which makes its MAPE infinite. It stays in training wherever its condition is not held out.
-- `random_subsampled` is a data-size control, not a held-out split: the same val and test flights as `random`, with
-  train cut to a fixed random subset (seed 42) the size of payload500's train set. Comparing it with `random`
-  shows what the smaller training set costs; comparing payload500 with it shows what the unseen payload costs on
-  top of that. The size is computed from payload500, so it follows whichever route source is in use.
+- `random_subsampled` and `random_sub_<split>` are data-size controls (`splits.CONTROLS`), not held-out splits: the
+  same val and test flights as `random`, with train cut to a fixed random subset (seed 42) the size of the matched
+  split's train set (payload500 for `random_subsampled`). Comparing a held-out split with its control shows what the
+  unseen condition costs beyond having less data. Sizes are computed, so they follow whichever route source is in use.
 - Checkpoints store their split, seed, flight lists and normalization stats. `evaluate_torch.py` and
   `plot_results.py` normalize with the checkpoint's own stats; the ported pretrained models don't store them and
   fall back to the random split, which is what they were trained on. This does not change the baseline numbers.
@@ -221,6 +226,35 @@ For an in-distribution reference, compare against the `random_subsampled` model 
 then scored only on held-out-condition flights that neither trained or validated on (e.g. 21 of the 500 g flights).
 Without `--unseen`, a random-split model has trained on most of a held-out split's test flights, so its error there
 is partly training error.
+
+### Stress test
+
+```bash
+python stress_test.py    # all of Results/ckpts + Liu -> Results/stress_test/
+```
+
+Evaluates every checkpoint (and Liu) on every flight, caches the per-flight errors in `per_flight.csv` (new
+checkpoints are added on the next run), and compares each held-out split with its control on the flights that no
+run of either trained or validated on. s-TCN, 30 epochs, 3 seeds; gap = held-out minus control, in % points:
+
+| split | n | MAPE held-out / control | gap | RE gap | Liu MAPE |
+|---|---|---|---|---|---|
+| `payload500` | 21 | 7.46 / 7.26 | +0.20 | +0.90 | 11.04 |
+| `payload250` | 16 | 7.31 / 7.21 | +0.11 | +0.11 | 10.79 |
+| `speed12` | 9 | 8.87 / 8.57 | +0.30 | +0.61 | 13.49 |
+| `alt100` | 16 | 8.22 / 7.82 | +0.40 | +0.39 | 10.69 |
+| `route` | 8 | 10.89 / 9.81 | +1.08 | +2.30 | 13.67 |
+| `speed10-12` | 27 | 9.89 / 9.96 | −0.07 | −0.34 | 13.68 |
+| `speed8-12` | 57 | 8.82 / 8.52 | +0.30 | −0.25 | 12.85 |
+
+Figures and table: `docs/stress_test/` (`gaps.png`, `speed_tcn16.png`, `gaps.csv`).
+
+- Holding out one condition barely hurts the s-TCN; only `alt100` is consistent across seeds.
+- `route` is not a clean comparison: all off-route flights are in the random test set, so the control never saw
+  them either.
+- Even `speed8-12` (train on 4–6 m/s) shows no gap. Mean flight power varies only ~3 % across commanded speeds
+  (521–534 W), because takeoff, climb, hover and landing look the same at every speed, and wind spreads the measured
+  airspeed (train p99 11.9 m/s, max 14.1). So within this dataset speed is not a real extrapolation.
 
 ### Liu model on the held-out splits
 
