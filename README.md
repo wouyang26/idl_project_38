@@ -24,7 +24,10 @@ python3.13 -m venv .venv && source .venv/bin/activate
 pip install --extra-index-url https://download.pytorch.org/whl/cpu -r <(grep -vE 'keras-tcn|tensorflow|tf-keras' requirements-torch.txt)
 ```
 
-Get the dataset (once): `python train_torch.py -D --total_epochs 0`, which downloads and unzips it into `./data/`.
+Get the dataset (once): `./scripts/download_data.sh`.
+It downloads the authors' preprocessed flights into `./data/`
+and the KiltHub per-flight settings (speed, payload, altitude, route) into `./data/kilthub/`, and checks both against known hashes.
+`splits.py` needs `data/kilthub/parameters.csv` for the route labels: without it, it falls back to the flight sheet and `route` gets 10 flights instead of 8.
 
 The TCNs train fine on a CPU: the 30-epoch s-TCN below took about 10 minutes on 8 cores. The stateful LSTMs
 (batch size 1) are slow on any hardware.
@@ -65,7 +68,7 @@ The MAPE in the training log is on normalized power. Use `evaluate_torch.py` for
 | `-m` | evaluate | Model names (`b-TCN`, `s-TCN`, `b-LSTM`, `s-LSTM`, `liu`, `all`) or `.pt` paths |
 | `-e` | evaluate | Flight sets: `train`, `val`, `test`, `random`, `all`, or a held-out split name (its test flights) |
 | `--unseen` | evaluate | Drop every flight any listed model trained or validated on, so all rows are scored on the same unseen flights (headers show `n`) |
-| `--split` | train | `random` (paper), `payload500`, `payload250`, `speed12`, `alt100`, `route`; see [Held-out splits](#held-out-splits) |
+| `--split` | train | `random` (paper), `payload500`, `payload250`, `speed12`, `alt100`, `route`, `random_subsampled`; see [Held-out splits](#held-out-splits) |
 | `--net_type` | train | `tcn` or `lstm` |
 | `--nb_filters`, `--kernel_size`, `--n_layers`, `--nb_stacks` | train | TCN size (dilations 1, 2, …, 2^(n_layers−1)) |
 | `--units`, `--n_hidden`, `--stateful` | train | LSTM size, number of layers, carry state across batches |
@@ -178,6 +181,7 @@ Payload is stored in kg (0, 0.25, 0.5) in `processed.csv`.
 | `speed12` | all 12 m/s flights | 105 | 35 | 36 | extrapolation to a faster flight |
 | `alt100` | all 100 m flights | 99 | 33 | 44 | extrapolation to a higher altitude |
 | `route` | all flights off the main route | 132 | 45 | 10 | a new route (the paper's "random" flights) |
+| `random_subsampled` | the paper's split | 87 | 38 | 35 | control: `random` with train cut to payload500's size |
 
 Sizes are with routes from the flight sheet (the fallback, see below). With KiltHub routes, 276 and 277 move
 to the main route: `route` tests on 8 flights, and the payload500 / alt100 / speed12 sizes shift by a flight or two.
@@ -193,6 +197,10 @@ to the main route: `route` tests on 8 flights, and the payload500 / alt100 / spe
 - `alt100` drops the 2 mixed-altitude flights (25-50-100-25 m), which also fly at 100 m.
 - Flight 232 (500 g, 12 m/s, 100 m) is never a held-out test flight. Its last ~80 logged steps are after the
   motors stop (power ≤ 0 W), which makes its MAPE infinite. It stays in training wherever its condition is not held out.
+- `random_subsampled` is a data-size control, not a held-out split: the same val and test flights as `random`, with
+  train cut to a fixed random subset (seed 42) the size of payload500's train set. Comparing it with `random`
+  shows what the smaller training set costs; comparing payload500 with it shows what the unseen payload costs on
+  top of that. The size is computed from payload500, so it follows whichever route source is in use.
 - Checkpoints store their split, seed, flight lists and normalization stats. `evaluate_torch.py` and
   `plot_results.py` normalize with the checkpoint's own stats; the ported pretrained models don't store them and
   fall back to the random split, which is what they were trained on. This does not change the baseline numbers.
