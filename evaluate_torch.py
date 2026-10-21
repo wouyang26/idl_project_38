@@ -57,6 +57,8 @@ if __name__ == '__main__':
     parser.add_argument('-e', '--evaluate', default=['test'], nargs='*', choices=['train', 'test', 'val', 'random', 'all'] + SPLITS[1:],
                         help='Flight sets; a held-out split name (e.g. speed12) means that split\'s test flights.')
     parser.add_argument('--device', default='cuda' if torch.cuda.is_available() else 'cpu')
+    parser.add_argument('--unseen', action='store_true',
+                        help='Only score flights that none of the models trained or validated on (same flights in every row).')
     args = parser.parse_args()
 
     if 'all' in args.model:
@@ -78,7 +80,7 @@ if __name__ == '__main__':
         for k in eval_range
     }
 
-    rows = []
+    results, seen = [], set()
     for name in models:
         if name == 'liu':
             [k1, k2, c2, c4, c5] = liu_model.optimum_values()
@@ -90,6 +92,11 @@ if __name__ == '__main__':
             stats = (ckpt['data_min'], ckpt['data_max']) if 'data_min' in ckpt else None
             data, data_min, data_max, _, _, _ = process_data(all_data, stats=stats, **inputs)
             tensors = create_tensors(data, eval_range, device=args.device, **inputs)
+            if 'ranges' in ckpt:
+                seen.update(ckpt['ranges']['train'] + ckpt['ranges']['val'])
+            else:  # ported pretrained models were trained on the paper's random split
+                seen.update(flight_ranges['train'])
+                seen.update(flight_ranges['val'])
 
         mape, re = {}, {}
         for flight in eval_range:
@@ -104,10 +111,18 @@ if __name__ == '__main__':
             pred_e = calc_energy(y_pred, all_data[flight]['time'].values[first:], change_points[flight])
             re[flight] = np.mean(np.abs((true_e - pred_e) / true_e)) * 100
 
+        results.append((name, mape, re))
+
+    if args.unseen:
+        flight_ranges = {d: [f for f in flight_ranges[d] if f not in seen] for d in datasets}
+    rows = []
+    for name, mape, re in results:
         row = {'Model': name}
         for d in datasets:
-            row[d] = '{:.2f}/{:.2f}'.format(np.mean([mape[f] for f in flight_ranges[d]]),
-                                           np.mean([re[f] for f in flight_ranges[d]]))
+            fs = flight_ranges[d]
+            col = '{} (n={})'.format(d, len(set(fs))) if args.unseen else d
+            row[col] = '{:.2f}/{:.2f}'.format(np.mean([mape[f] for f in fs]),
+                                             np.mean([re[f] for f in fs])) if fs else '-'
         rows.append(row)
 
     print('MAPE (%) / RE (%)')
