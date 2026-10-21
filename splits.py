@@ -7,6 +7,9 @@
     alt100      test = all 100 m flights            (extrapolation in altitude; the 2 mixed 25-50-100-25 m
                                                      flights are dropped, since they also fly at 100 m)
     route       test = all flights off the main route
+    speed10-12  test = all 10 and 12 m/s flights    (wider speed extrapolation: train on 4-8 m/s)
+    speed8-12   test = all 8, 10 and 12 m/s flights (train on 4-6 m/s only)
+    random_subsampled, random_sub_<split>  data-size controls: random split, train cut to that split's size
 
 For the held-out splits the validation set is drawn (seed 42, 25 %) from the remaining flights, so it stays
 inside the training conditions, and every flight appears at most once. The condition splits (payload, speed,
@@ -31,7 +34,12 @@ import pandas as pd
 
 from data_utils import get_flights_and_ranges
 
-SPLITS = ['random', 'payload500', 'payload250', 'speed12', 'alt100', 'route', 'random_subsampled']
+SPLITS = ['random', 'payload500', 'payload250', 'speed12', 'alt100', 'route',
+          'speed10-12', 'speed8-12', 'random_subsampled', 'random_sub_speed10-12', 'random_sub_speed8-12']
+CONTROLS = {'random_subsampled': 'payload500',
+            'random_sub_speed10-12': 'speed10-12',
+            'random_sub_speed8-12': 'speed8-12'}
+
 FLIGHT_SHEET = 'Flight Sheet.xlsx'
 NO_MAPE_FLIGHTS = [232]  # power <= 0 W at some steps; kept for training, never a held-out test flight
 
@@ -127,6 +135,10 @@ def _held_out(cond, split):
         return cond['payload'] == 250, off_route
     if split == 'speed12':
         return cond['speed'] == 12, off_route
+    if split == 'speed10-12':
+        return cond['speed'] >= 10, off_route
+    if split == 'speed8-12':
+        return cond['speed'] >= 8, off_route
     if split == 'alt100':
         return cond['altitude'] == '100', off_route | cond['altitude'].str.contains('-')
     if split == 'route':
@@ -143,11 +155,11 @@ def get_split(all_data, split='random', data_dir='./data/', val_split=0.25, rand
         _, _, _, test_range, val_range, train_range = get_flights_and_ranges(all_data, val_split=val_split)
         return test_range, val_range, train_range
 
-    if split == 'random_subsampled':
+    if split in CONTROLS:
         test_range, val_range, train_full = get_split(all_data, 'random', data_dir, val_split, random_seed)
         if cond is None:
             cond = load_conditions(data_dir)
-        n = len(get_split(all_data, 'payload500', data_dir, val_split, random_seed, cond)[2])
+        n = len(get_split(all_data, CONTROLS[split], data_dir, val_split, random_seed, cond)[2])
         rng = np.random.RandomState(random_seed)
         train_range = np.sort(rng.choice(train_full, size=n, replace=False))
         return test_range, val_range, train_range
