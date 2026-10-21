@@ -24,7 +24,10 @@ python3.13 -m venv .venv && source .venv/bin/activate
 pip install --extra-index-url https://download.pytorch.org/whl/cpu -r <(grep -vE 'keras-tcn|tensorflow|tf-keras' requirements-torch.txt)
 ```
 
-Get the dataset (once): `python train_torch.py -D --total_epochs 0`, which downloads and unzips it into `./data/`.
+Get the dataset (once): `./scripts/download_data.sh`.
+It downloads the authors' preprocessed flights into `./data/`
+and the KiltHub per-flight settings (speed, payload, altitude, route) into `./data/kilthub/`, and checks both against known hashes.
+`splits.py` needs `data/kilthub/parameters.csv` for the route labels: without it, it falls back to the flight sheet and `route` gets 10 flights instead of 8.
 
 The TCNs train fine on a CPU: the 30-epoch s-TCN below took about 10 minutes on 8 cores. The stateful LSTMs
 (batch size 1) are slow on any hardware.
