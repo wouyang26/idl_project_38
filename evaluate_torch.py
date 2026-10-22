@@ -122,7 +122,7 @@ if __name__ == '__main__':
             fs = flight_ranges[d]
             col = '{} (n={})'.format(d, len(set(fs))) if args.unseen else d
             row[col] = '{:.2f}/{:.2f}'.format(np.mean([mape[f] for f in fs]),
-                                             np.mean([re[f] for f in fs])) if fs else '-'
+                                             np.mean([re[f] for f in fs])) if len(fs)>0 else '-'
         rows.append(row)
 
     print('MAPE (%) / RE (%)')
