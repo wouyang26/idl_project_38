@@ -185,9 +185,11 @@ Payload is stored in kg (0, 0.25, 0.5) in `processed.csv`.
 | `speed10-12` | all 10 and 12 m/s flights | 78 | 26 | 74 | wider speed extrapolation (train on 4–8 m/s) |
 | `speed8-12` | all 8, 10 and 12 m/s flights | 52 | 18 | 108 | widest speed extrapolation (train on 4–6 m/s) |
 | `random_sub_speed10-12` / `random_sub_speed8-12` | the paper's split | 78 / 52 | 38 | 35 | controls matched to the speed splits' train sizes |
+| `wind` | main-route flights with cruise wind > 4.34 m/s | 107 | 36 | 36 | the windiest ~20 % of flights |
+| `random_sub_wind` | a random half (18) of the `wind` test flights | 107 | 41 | 18 | control for `wind` (see below) |
 
-Sizes are with routes from the flight sheet (the fallback, see below), except the speed10-12 / speed8-12 rows and
-their controls, which use KiltHub routes. With KiltHub routes, 276 and 277 move to the main route: `route` tests on
+Sizes are with routes from the flight sheet (the fallback, see below), except the speed10-12 / speed8-12 / wind rows
+and their controls, which use KiltHub routes. With KiltHub routes, 276 and 277 move to the main route: `route` tests on
 8 flights, and the payload500 / alt100 / speed12 sizes shift by a flight or two. `python splits.py` prints the
 exact sizes.
 
@@ -206,6 +208,15 @@ exact sizes.
   same val and test flights as `random`, with train cut to a fixed random subset (seed 42) the size of the matched
   split's train set (payload500 for `random_subsampled`). Comparing a held-out split with its control shows what the
   unseen condition costs beyond having less data. Sizes are computed, so they follow whichever route source is in use.
+- **Wind** comes from the raw KiltHub logs (`data/kilthub/flights/`, fetched by `scripts/download_data.sh`), not the
+  preprocessed data. `python -m utils.wind` writes the per-flight cruise wind to `data/kilthub/wind.csv`
+  (`--check` prints the convention checks). In cruise, wind = ground velocity − anemometer airflow; the body-frame
+  velocity is rotated by the INS heading, and the anemometer angle is magnetic, so the 2019 declination at Penn Hills,
+  PA (−9.4°) is added. The legs of a route still disagree by ~4.5 m/s, so the split separates windy from calm days
+  rather than ranking flights finely, and wind is clustered by date (half the windy flights are from two days).
+- `random_sub_wind` differs from the other controls: the random split's test set holds only a few windy flights,
+  so it tests on a random half of the `wind` test flights and trains (cut to `wind`'s size) and validates on the
+  other main-route flights, windy half included. This leaves 20 windy flights that neither model saw.
 - Checkpoints store their split, seed, flight lists and normalization stats. `evaluate_torch.py` and
   `plot_results.py` normalize with the checkpoint's own stats; the ported pretrained models don't store them and
   fall back to the random split, which is what they were trained on. This does not change the baseline numbers.
@@ -235,21 +246,27 @@ python stress_test.py    # all of Results/ckpts + Liu -> Results/stress_test/
 
 Evaluates every checkpoint (and Liu) on every flight, caches the per-flight errors in `per_flight.csv` (new
 checkpoints are added on the next run), and compares each held-out split with its control on the flights that no
-run of either trained or validated on. s-TCN, 30 epochs, 3 seeds; gap = held-out minus control, in % points:
+run of either trained or validated on. TCNs, 30 epochs, 3 seeds; gap = held-out minus control, in % points:
 
-| split | n | MAPE held-out / control | gap | RE gap | Liu MAPE |
+| split | n | s-TCN MAPE held-out / control | s-TCN gap MAPE / RE | b-TCN gap MAPE / RE | Liu MAPE |
 |---|---|---|---|---|---|
-| `payload500` | 21 | 7.46 / 7.26 | +0.20 | +0.90 | 11.04 |
-| `payload250` | 16 | 7.31 / 7.21 | +0.11 | +0.11 | 10.79 |
-| `speed12` | 9 | 8.87 / 8.57 | +0.30 | +0.61 | 13.49 |
-| `alt100` | 16 | 8.22 / 7.82 | +0.40 | +0.39 | 10.69 |
-| `route` | 8 | 10.89 / 9.81 | +1.08 | +2.30 | 13.67 |
-| `speed10-12` | 27 | 9.89 / 9.96 | −0.07 | −0.34 | 13.68 |
-| `speed8-12` | 57 | 8.82 / 8.52 | +0.30 | −0.25 | 12.85 |
+| `payload500` | 21 | 7.46 / 7.26 | +0.20 / +0.90 | −0.01 / +0.77 | 11.04 |
+| `payload250` | 16 | 7.31 / 7.21 | +0.11 / +0.11 | −0.20 / −0.25 | 10.79 |
+| `speed12` | 9 | 8.87 / 8.57 | +0.30 / +0.61 | +0.22 / +0.71 | 13.49 |
+| `alt100` | 16 | 8.22 / 7.82 | +0.40 / +0.39 | +0.22 / +0.34 | 10.69 |
+| `route` | 8 | 10.89 / 9.81 | +1.08 / +2.30 | +1.30 / +2.71 | 13.67 |
+| `speed10-12` | 27 | 9.89 / 9.96 | −0.07 / −0.34 | +0.12 / +0.03 | 13.68 |
+| `speed8-12` | 57 | 8.82 / 8.52 | +0.30 / −0.25 | +0.90 / −0.03 | 12.85 |
+| `wind` | 20 | 11.55 / 10.79 | +0.77 / +1.39 | +1.22 / +1.81 | 13.94 |
 
-Figures and table: `docs/stress_test/` (`gaps.png`, `speed_tcn16.png`, `gaps.csv`).
+Figures and table: `docs/stress_test/`: `gaps_tcn.png` (TCNs only), `gaps.png` and `gaps.csv` (all models, LSTMs
+included), `speed_<model>.png`.
 
-- Holding out one condition barely hurts the s-TCN; only `alt100` is consistent across seeds.
+- Holding out a payload, speed or altitude barely hurts either TCN; only `alt100` is consistent across seeds for the
+  s-TCN. Both TCNs beat Liu on every split.
+- `wind` is the clearest result: both TCNs are worse on unseen windy flights (2–6× the seed spread), even though its
+  control has trained on windy flights. Wind is clustered by date, so this is partly a date shift.
+- The LSTM rows in `gaps.csv` are not meaningful: most retrained LSTMs collapsed (see [Known quirks](#known-quirks)).
 - `route` is not a clean comparison: all off-route flights are in the random test set, so the control never saw
   them either.
 - Even `speed8-12` (train on 4–6 m/s) shows no gap. Mean flight power varies only ~3 % across commanded speeds
@@ -284,18 +301,26 @@ Matches the paper's Liu numbers on `random` and `test`. Raw output: `docs/liu/li
   10 fixed ones, so 269 and 278 appear twice in the 37-entry test list (35 unique flights). The paper's test numbers
   and `evaluate_torch.py` average over the list with duplicates; the tables above do too.
 - **Training-log MAPE** is on min-max normalized power, so it is not comparable to the paper's MAPE.
+- **Retrained LSTMs often collapse to a constant prediction** (16 of our 30 LSTM runs). The head is
+  Linear → ReLU → Linear with 10 hidden units. Once all 10 ReLUs are negative on every input, the output is the last
+  bias and no gradient reaches the LSTM again; seeds then converge to the same constant (identical validation MAPE).
+  Runs that survive keep only 1–4 live units, so their validation MAPE swings 3–6 points between epochs. Batch-size-1
+  RMSprop takes ~90k roughly lr-sized steps per epoch (the TCN: ~2.8k Adam steps at batch 32). The port matches the
+  Keras defaults, so this is the authors' training setup, not a port bug. `final.pt` is the last epoch, with no
+  best-checkpoint selection.
 
-## Next steps (from the project proposal)
+## Next steps
 
-Before the midterm:
-1. **Finish the baselines:** train b-TCN and s-/b-LSTM from scratch, run 3–5 seeds per model (report mean ± std), and
-   evaluate the Liu physics model (`liu_model.py`) with the same per-flight MAPE/RE code.
-2. ~~**Held-out splits**~~: done, see [Held-out splits](#held-out-splits).
-3. **Stress test:** train every baseline on every split (several seeds) and plot error against the held-out
-   condition, next to the in-distribution error on the same flights.
+Done before the midterm: the PyTorch port and reproduction, Liu, the held-out splits with size-matched controls and
+`--unseen` scoring, the wind split, and the stress test for both TCNs (3 seeds) and the LSTMs (see above).
 
-After the midterm: the physics + TCN hybrid (ŷ = P_Liu + g_θ), a small transformer, uncertainty estimation
-(variance head, deep ensemble, MC dropout; target ≈90 % coverage of the 90 % intervals), and CVaR with model uncertainty.
+After the midterm:
+1. **LSTM training:** make it reliable (a leaky ReLU head, a lower learning rate or Adam), then rerun both LSTMs on
+   every split with 3 seeds.
+2. **Physics + TCN hybrid** (ŷ = P_Liu + g_θ, Liu refit on each split's training flights), evaluated as a learning
+   curve (5–52 training flights) and on `route` / `wind`.
+3. **Uncertainty:** variance head, deep ensemble, MC dropout (target ≈90 % coverage of the 90 % intervals), and CVaR
+   with model uncertainty. A date-matched control for `wind`.
 
 ---
 
