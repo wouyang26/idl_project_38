@@ -1,23 +1,22 @@
-% Team 38 midterm report draft (NeurIPS 2019 template, same as the proposal).
-% Upload to Overleaf next to neurips_2019.sty; put the figures listed in \graphicspath (or a figures/ folder).
+% Team 38 midterm report (NeurIPS 2019 template, same as the proposal).
+% Upload to Overleaf next to neurips_2019.sty, with the figures training_curves.png (docs/baseline/) and
+% gaps_tcn.png (docs/stress_test/).
 %
 % Rubric (midterm column) -> section:
 %   Abstract ............................ abstract
 %   Motivation & objectives ............. Sec 1
 %   Literature review, background ....... Sec 2
 %   Model description (table) ........... Sec 3.1, Table 1
-%   Dataset (prep, batch sampling) ...... Sec 3.2, Table 2
+%   Dataset (prep, batch sampling) ...... Sec 3.2 (split sizes in Table 3)
 %   Evaluation metric ................... Sec 3.3
 %   Loss function ....................... Sec 3.4
 %   Experimental depth .................. Sec 4 (2 TCNs x 13 splits x 3 seeds, LSTMs, controls, Liu)
-%   Baseline (MANDATORY) + reproduction . Sec 4.1, Table 3, Fig 1
-%   Implemented extensions .............. Sec 4.2-4.3 (stress test, wind split)
-%   Results (preliminary) ............... Sec 5, Table 4, Fig 2-3
+%   Baseline (MANDATORY) + reproduction . Sec 4.1, Table 2, Fig 1
+%   Implemented extensions .............. Sec 4.2 (stress test, wind split)
+%   Results (preliminary) ............... Sec 5, Table 3, Fig 2
 %   Discussion (challenges, risks) ...... Sec 6
 %   Future directions (2-3 actions) ..... Sec 7
 %   Bibliography, contributions, GitHub . end
-% Figures to upload next to this file: training_curves.png, example_flights.png (docs/baseline/),
-% gaps_tcn.png, speed_tcn16.png (docs/stress_test/).
 
 \documentclass{article}
 
@@ -50,18 +49,14 @@
 \maketitle
 
 \begin{abstract}
-Delivery operators must predict a drone's energy use before takeoff, because running out of battery mid-flight
-usually means losing the aircraft. Choudhry et al.~\cite{choudhry2021} showed that a temporal convolutional
-network (TCN) trained on flight logs predicts quadrotor power better than a physics model, but they only tested it
-on flights whose payload, speed and altitude also appear in training. We ported their models to PyTorch,
-reproduced their results, and stress-tested them on held-out operating conditions. To separate the cost of an
-unseen condition from the cost of having less training data, we compare each held-out model with a control trained
-on the same number of randomly chosen flights, and score both only on flights neither model saw. For the small TCN, holding out a
-payload, a speed range or an altitude raises power error by at most 0.4 percentage points (7--10\% MAPE), and
-the model still beats the Liu physics model (11--14\%) everywhere. Speed turns out not to be a real
-extrapolation in this dataset, so we added a wind split built from the raw anemometer and GNSS logs. Both TCN
-sizes lose about one point only on a new route and on windy flights (+0.8 and +1.2 MAPE points for wind).
-Retrained LSTMs are unreliable: 16 of 30 runs collapse to a constant prediction, which we trace to dead ReLU units
+Delivery operators must predict a drone's energy use before takeoff. Choudhry et al.~\cite{choudhry2021} showed
+that a temporal convolutional network (TCN) trained on flight logs predicts quadrotor power better than a physics
+model, but tested it only on payload, speed and altitude levels seen in training. We ported their models to
+PyTorch, reproduced their results, and stress-tested them on held-out conditions against size-matched controls,
+scoring both only on flights neither saw. Holding out a payload, speed range or altitude raises the small TCN's
+power error by at most 0.4 percentage points (7--10\% MAPE), and both TCNs beat the Liu physics model (11--14\%)
+everywhere. On a new route and on a wind split we built from the raw anemometer and GNSS logs, both TCNs lose about
+one point. Retrained LSTMs are unreliable: 16 of 30 runs collapse to a constant, which we trace to dead ReLU units
 in the output head.
 \end{abstract}
 
@@ -74,24 +69,21 @@ flight reuses payload, speed and altitude levels seen in training.
 \textbf{Motivation.} Operators and route planners need energy estimates they can trust before takeoff. A model
 that is accurate on familiar flights but wrong on new ones gives false confidence exactly when risk is highest.
 
-\textbf{Objectives.} As in our proposal, we (i) measure how the published models degrade on held-out operating
-conditions, (ii) combine physics with a neural network, and (iii) add calibrated uncertainty (target: 90\%
-prediction intervals with $\approx$90\% empirical coverage). Our midterm results (Section~\ref{sec:results})
-change objective (ii). We had planned to beat the TCN's error on held-out payload, speed and altitude, but the TCN
-barely degrades there. The hybrid will instead target data efficiency and genuinely new conditions (route, wind),
-where the gaps we measure are larger.
+\textbf{Objectives.} As proposed, we (i) measure how the published models degrade on held-out operating conditions,
+(ii) combine physics with a neural network, and (iii) add calibrated uncertainty (90\% prediction intervals with
+$\approx$90\% empirical coverage). Our results (Section~\ref{sec:results}) change (ii): the TCN barely degrades on
+held-out payload, speed and altitude, so the hybrid will target data efficiency and genuinely new conditions
+(route, wind) instead.
 
 \section{Related work and background}
-\textbf{Deep energy models.} Choudhry et al.~\cite{choudhry2021} predict power at each time step from a 20-step
-window of airspeed, its components, vertical speed and angle of attack, plus air density and payload. Their best
-TCN reaches 9.06\% test MAPE versus 12.70\% for the Liu physics model~\cite{liu2017}, and they score the energy
-distribution from Monte Carlo simulation with Conditional Value-at-Risk (CVaR). We use their
-code~\cite{cvarcode}, metrics (power MAPE and per-regime energy error) and baselines, so our numbers are directly
-comparable. \textbf{Physics models.} Liu et al.~\cite{liu2017} model power as induced, profile and parasitic terms
-with five fitted constants. Zhang et al.~\cite{zhang2021} show that physics models disagree widely, which
-motivates learning from data. \textbf{Dataset.} Rodrigues et al.~\cite{rodrigues2021} released the flight logs
-(DJI Matrice 100, Penn Hills, PA) used by~\cite{choudhry2021}. \textbf{Uncertainty.} For the second half we draw
-on deep ensembles~\cite{lakshminarayanan2017} and Monte Carlo dropout~\cite{gal2016}.
+Choudhry et al.~\cite{choudhry2021} predict power at each time step from a 20-step window of airspeed, its
+components, vertical speed and angle of attack, plus air density and payload. Their best TCN reaches 9.06\% test
+MAPE versus 12.70\% for the Liu physics model~\cite{liu2017}, and they score Monte Carlo energy distributions with
+Conditional Value-at-Risk (CVaR). We use their code~\cite{cvarcode}, metrics and baselines, so our numbers are
+directly comparable. Liu et al.~\cite{liu2017} model power as induced, profile and parasitic terms with five fitted
+constants; Zhang et al.~\cite{zhang2021} show that such physics models disagree widely. Rodrigues et
+al.~\cite{rodrigues2021} released the flight logs (DJI Matrice 100, Penn Hills, PA). For uncertainty we draw on
+deep ensembles~\cite{lakshminarayanan2017} and Monte Carlo dropout~\cite{gal2016}.
 
 \section{Methods}
 \subsection{Models}
@@ -102,10 +94,10 @@ dilated convolutions (kernel 2, dilations 1--16, ReLU), and its last-step featur
 static inputs. The LSTM backbone has three stacked layers and carries its state across a flight (stateful,
 batch size 1). Both feed a head of Linear$\to$ReLU$\to$Linear (10 hidden units).
 
-\begin{table}[h]
+\begin{table}[ht]
 \centering
 \caption{Models. Inputs: window $[B,20,5]$ + static $[B,2]$; output: power $[B,1]$. PyTorch LSTMs have two
-bias vectors per gate where Keras has one, hence 768 / 192 more parameters than reported in~\cite{choudhry2021}.}
+bias vectors per gate (Keras: one), hence 768 / 192 more parameters than in~\cite{choudhry2021}.}
 \label{tab:models}
 \small
 \begin{tabular}{lllr}
@@ -126,47 +118,28 @@ We use the authors' preprocessed flights~\cite{cvarcode}: 187 flights of a DJI M
 main triangular route covering every combination of payload (0/250/500\,g), speed (4--12\,m/s) and altitude
 (25--100\,m), and 8 on other routes.\footnote{Our proposal quoted 195 + 10 flights from the full dataset
 release; 187 of them have preprocessed data. We take route labels from the release's
-\texttt{parameters.csv}~\cite{rodrigues2021}, which corrects two flights that the authors' flight sheet mislabels.} The target is battery voltage $\times$ current. Inputs are min--max normalized
-with statistics from the training and validation flights (payload and density are left raw), and training samples
-batches of 32 overlapping 20-step windows from training flights only (TCN; the stateful LSTMs use batch size 1).
+\texttt{parameters.csv}~\cite{rodrigues2021}, which corrects two flights that the authors' flight sheet mislabels.}
+The target is battery voltage $\times$ current. Inputs are min--max normalized with statistics from the training
+and validation flights (payload and density are left raw), and training samples batches of 32 overlapping 20-step
+windows from training flights only (TCN; the stateful LSTMs use batch size 1).
 
-Besides the paper's random split (114/38/35 train/val/test flights), each held-out split puts every flight with one
-condition in the test set (Table~\ref{tab:splits}) and draws the validation set (25\%, seed 42) from the
-remaining flights, so model selection never sees the held-out condition. Condition splits use main-route flights
-only, so off-route flights appear only in \texttt{route}.
+Besides the paper's random split (114/38/35 train/val/test flights), each held-out split tests on every
+main-route flight with one condition: 500\,g (\texttt{payload500}, extrapolation), 250\,g (\texttt{payload250},
+interpolation), 12, 10--12 or 8--12\,m/s (\texttt{speed12}, \texttt{speed10-12}, \texttt{speed8-12}), 100\,m
+(\texttt{alt100}) or cruise wind above 4.34\,m/s (\texttt{wind}); \texttt{route} tests on all off-route flights.
+Validation (25\%, seed 42) is drawn from the remaining flights, so model selection never sees the held-out
+condition. Training sizes are in Table~\ref{tab:gaps}.
 
 \textbf{Wind split.} The preprocessed data has no wind, so we estimate it from the raw logs~\cite{rodrigues2021}.
-The anemometer measures airflow past the drone. In cruise, the wind is the ground velocity minus that airflow:
+In cruise, the wind is the ground velocity minus the airflow measured by the anemometer:
 \begin{equation}
   \mathbf{w} = \mathbf{v}_g - s\,(\sin a, \cos a), \qquad a = \alpha + \delta ,
 \end{equation}
 where $\mathbf{v}_g$ is the body-frame velocity rotated by the INS heading into (east, north), $s$ and $\alpha$
-are the anemometer speed and the compass direction the air comes from, and $\delta=-9.4^\circ$ is the magnetic
-declination at the site in 2019 (WMM2015). We validated these conventions on the data: they make the wind
-consistent between the legs of the route, while the alternative readings of the angle disagree 4--7$\times$ more. The flight's wind is
-its mean over cruise. \texttt{wind} holds out flights above 4.34\,m/s, the windiest 20\% of the main route.
-
-\begin{table}[h]
-\centering
-\caption{Splits (flights). Each control is the random split with training cut to the matched split's size.
-$n$: held-out flights neither the held-out model nor its control trained or validated on.}
-\label{tab:splits}
-\small
-\begin{tabular}{llrrrr}
-\toprule
-Split & Held out (test) & Train & Val & Test & $n$ \\
-\midrule
-\texttt{payload500} & 500\,g (extrapolation) & 87 & 30 & 61 & 21 \\
-\texttt{payload250} & 250\,g (interpolation) & 90 & 30 & 59 & 16 \\
-\texttt{speed12} & 12\,m/s & 106 & 36 & 36 & 9 \\
-\texttt{speed10-12} & 10--12\,m/s & 78 & 26 & 74 & 27 \\
-\texttt{speed8-12} & 8--12\,m/s & 52 & 18 & 108 & 57 \\
-\texttt{alt100} & 100\,m & 100 & 34 & 44 & 16 \\
-\texttt{route} & off-route flights & 134 & 45 & 8 & 8 \\
-\texttt{wind} & cruise wind $>4.34$\,m/s & 107 & 36 & 36 & 20 \\
-\bottomrule
-\end{tabular}
-\end{table}
+are the anemometer speed and the compass direction the air comes from, and $\delta=-9.4^\circ$ is the 2019
+magnetic declination at the site (WMM2015). These conventions make the wind consistent between the legs of the
+route; the alternative readings of the angle disagree 4--7$\times$ more. A flight's wind is its cruise mean, and
+\texttt{wind} holds out the windiest 20\% of main-route flights.
 
 \subsection{Evaluation}
 Following~\cite{choudhry2021}, the power error of flight $i$ with $T_i$ scored steps, measured power $y_t$ and
@@ -176,13 +149,12 @@ found by change-point detection on pitch) are
   \mathrm{MAPE}_i = \frac{100\%}{T_i}\sum_{t=1}^{T_i}\left|\frac{y_t-\hat y_t}{y_t}\right|, \qquad
   \mathrm{RE}_i = \frac{100\%}{R_i}\sum_{r=1}^{R_i}\left|\frac{E_r-\hat E_r}{E_r}\right|,
 \end{equation}
-where $E_r$ is the Simpson-integrated energy of regime $r$. Both are averaged over flights; the first 19 steps of a flight
-are not scored (no full window). We add two controls for a fair stress test. (1) \textbf{Size-matched control}: for every held-out split, a model trained on a random subset of the
-random split's training flights of the same size, so the comparison isolates the unseen condition from having less
-data. For \texttt{wind}, the random split already trains on most windy flights, which would leave only 7 for
-comparison; its control instead tests on a random half of the windy flights and may train on the other half.
-(2) \textbf{Unseen flights only}: the held-out model and its control are scored on the held-out flights that
-\emph{neither} trained or validated on ($n$ in Table~\ref{tab:splits}). We report
+where $E_r$ is the Simpson-integrated energy of regime $r$. Both are averaged over flights, skipping each flight's
+first 19 steps (no full window). Two controls make the stress test fair. (1) \textbf{Size-matched control}: for
+each held-out split, a model trained on a random subset of the random split's training flights of the same size,
+which isolates the unseen condition from having less data. The random split trains on most windy flights, so the
+\texttt{wind} control instead tests on a random half of them and may train on the other half. (2) \textbf{Unseen flights only}: both models are scored on the $n$ held-out flights
+that \emph{neither} trained or validated on (Table~\ref{tab:gaps}). We report
 \begin{equation}
   \mathrm{gap} = \overline{\mathrm{MAPE}}_{\text{held-out}} - \overline{\mathrm{MAPE}}_{\text{control}},
 \end{equation}
@@ -190,30 +162,25 @@ averaged over 3 seeds (mean $\pm$ std over seeds).
 
 \subsection{Loss and optimization}
 All networks minimize the mean squared error of normalized power. TCNs use Adam (learning rate $10^{-3}$,
-$\epsilon=10^{-7}$) with batch size 32; LSTMs use RMSprop (learning rate $10^{-3}$, $\rho=0.9$) with batch size 1. We train for 30
-epochs; the authors' models were trained for 100, and 30 epochs already matches them for the TCNs and the s-LSTM
-(Table~\ref{tab:repro}).
-\footnote{Our proposal stated a learning rate of 0.002. The released code passes the optimizer by name, so Keras
-uses its default of $10^{-3}$; our port matches the released code.}
-The final-epoch checkpoint is evaluated.
+$\epsilon=10^{-7}$, batch size 32); LSTMs use RMSprop (learning rate $10^{-3}$, $\rho=0.9$, batch size
+1).\footnote{Our proposal stated a learning rate of 0.002. The released code passes the optimizer by name, so Keras
+uses its default of $10^{-3}$; our port matches the released code.} We train for 30 epochs (the authors used 100;
+30 already matches them for the TCNs and the s-LSTM, Table~\ref{tab:repro}) and evaluate the final epoch.
 
 \section{Experiments}
 \subsection{Baseline reproduction}
 Bill ported the authors' Keras TCN and LSTM~\cite{cvarcode} to PyTorch and converted their checkpoints (output
 difference $<4\cdot10^{-7}$). The converted models reproduce the paper's power MAPE to within 0.01 points
-(Table~\ref{tab:repro}). The energy error matches for Liu and the LSTMs but is 0.2--0.4 points higher for the TCNs.
-Running the authors' own TensorFlow code gives the same small differences, so we attribute them to library versions
-in the energy computation, not to the port.
-Retrained from scratch, both TCNs match the paper over 3 seeds (s-TCN 8.86$\pm$0.26\% vs 9.13\%, b-TCN
-8.92$\pm$0.16\% vs 9.06\% test MAPE), and so does the s-LSTM (12.42\% vs 12.36\%, one seed). The retrained b-LSTM
-does not (16.80\% vs 11.47\%), for the reason in Section~\ref{sec:discussion}. Fig.~\ref{fig:baseline} shows the
-s-TCN's training curves and example predictions.
+(Table~\ref{tab:repro}). The energy error matches for Liu and the LSTMs and is 0.2--0.4 points higher for the
+TCNs, as it also is with the authors' own TensorFlow code, so we attribute it to library versions rather than the
+port. Retrained from scratch, both TCNs match the paper over 3 seeds (s-TCN 8.86$\pm$0.26\% vs 9.13\%, b-TCN
+8.92$\pm$0.16\% vs 9.06\% test MAPE), as does the s-LSTM (12.42\% vs 12.36\%, one seed). The b-LSTM does not
+(16.80\% vs 11.47\%; Section~\ref{sec:discussion}). Fig.~\ref{fig:baseline} shows training curves.
 
-\begin{table}[h]
+\begin{table}[t]
 \centering
-\caption{Reproduction: power MAPE / energy RE (\%) on the paper's flight sets. ``Random'' is the authors' 10
-fixed flights (mostly off the main route); ``test'' their 37-entry test list. Top: the authors' checkpoints
-converted to PyTorch. Bottom: our models trained from scratch on the paper's split.}
+\caption{Reproduction: power MAPE / energy RE (\%) on the paper's flight sets (``Random'': 10 fixed flights, mostly
+off-route; ``Test'': 37-entry list). Top: authors' checkpoints converted to PyTorch; bottom: retrained from scratch.}
 \label{tab:repro}
 \small
 \begin{tabular}{lcccc}
@@ -236,138 +203,111 @@ s-LSTM (seed 0) & -- & -- & 12.66 / 7.32 & 12.42 / 7.44 \\
 \end{tabular}
 \end{table}
 
-\begin{figure}[h]
+\begin{figure}[t]
 \centering
-\includegraphics[width=0.38\linewidth]{training_curves.png}\hfill
-\includegraphics[width=0.6\linewidth]{example_flights.png}
-\caption{Retrained s-TCN (seed 0). Left: training/validation loss and MAPE (on normalized power) per epoch; no
-overfitting. Right: measured vs predicted power on the best, median and worst test flights; dotted lines are
-regime boundaries.}
+\includegraphics[width=0.6\linewidth]{training_curves.png}
+\caption{Retrained s-TCN (seed 0): training and validation loss and MAPE (on normalized power) per epoch; no
+overfitting.}
 \label{fig:baseline}
 \end{figure}
 
 \subsection{Stress test}
-We trained both TCNs on every held-out split and its control with 3 seeds (Table~\ref{tab:splits}; 78 runs). Two of the
-splits are nested speed splits (train on 4--8 or 4--6\,m/s only), which we added after \texttt{speed12} showed no gap.
-The LSTMs were trained on \texttt{wind} and its control with 3 seeds, and with one seed on the other splits (b-LSTM all
-eleven, s-LSTM seven). Liu is evaluated on the same flights as a physics reference.
+Both TCNs ran every held-out split and its control with 3 seeds (78 runs); the LSTMs ran \texttt{wind} and its
+control with 3 seeds and the other splits with one (b-LSTM all eleven, s-LSTM seven). The nested speed splits were
+added after \texttt{speed12} showed no gap. Liu is scored on the same flights.
 
 \section{Results}\label{sec:results}
-\begin{table}[h]
+\begin{table}[t]
 \centering
-\caption{Stress test (3 seeds) on the $n$ unseen held-out flights: s-TCN MAPE held-out / control, and the gap
-(held-out minus control, percentage points, positive = held-out worse) in power MAPE / energy RE for both TCNs.
-Liu: MAPE on the same flights.}
+\caption{Stress test (3 seeds). Train: training flights; $n$: unseen held-out flights. Gap: held-out minus control
+(percentage points, positive = held-out worse). Liu: MAPE on the same flights.}
 \label{tab:gaps}
 \small
-\begin{tabular}{lrcccc}
+\begin{tabular}{lrrcccc}
 \toprule
-& & s-TCN MAPE & s-TCN gap & b-TCN gap & \\
-Split & $n$ & held-out / control & MAPE / RE & MAPE / RE & Liu \\
+& & & s-TCN MAPE & s-TCN gap & b-TCN gap & \\
+Split & Train & $n$ & held-out / control & MAPE / RE & MAPE / RE & Liu \\
 \midrule
-\texttt{payload500} & 21 & 7.46$\pm$0.27 / 7.26$\pm$0.12 & +0.20 / +0.90 & $-$0.01 / +0.77 & 11.04 \\
-\texttt{payload250} & 16 & 7.31$\pm$0.18 / 7.21$\pm$0.08 & +0.11 / +0.11 & $-$0.20 / $-$0.25 & 10.79 \\
-\texttt{speed12} & 9 & 8.87$\pm$0.30 / 8.57$\pm$0.04 & +0.30 / +0.61 & +0.22 / +0.71 & 13.49 \\
-\texttt{speed10-12} & 27 & 9.89$\pm$0.25 / 9.96$\pm$0.75 & $-$0.07 / $-$0.34 & +0.12 / +0.03 & 13.68 \\
-\texttt{speed8-12} & 57 & 8.82$\pm$0.11 / 8.52$\pm$0.36 & +0.30 / $-$0.25 & +0.90 / $-$0.03 & 12.85 \\
-\texttt{alt100} & 16 & 8.22$\pm$0.15 / 7.82$\pm$0.05 & +0.40 / +0.39 & +0.22 / +0.34 & 10.69 \\
-\texttt{route} & 8 & 10.89$\pm$0.32 / 9.81$\pm$0.28 & +1.08 / +2.30 & +1.30 / +2.71 & 13.67 \\
-\texttt{wind} & 20 & 11.55$\pm$0.21 / 10.79$\pm$0.25 & +0.77 / +1.39 & +1.22 / +1.81 & 13.94 \\
+\texttt{payload500} & 87 & 21 & 7.46$\pm$0.27 / 7.26$\pm$0.12 & +0.20 / +0.90 & $-$0.01 / +0.77 & 11.04 \\
+\texttt{payload250} & 90 & 16 & 7.31$\pm$0.18 / 7.21$\pm$0.08 & +0.11 / +0.11 & $-$0.20 / $-$0.25 & 10.79 \\
+\texttt{speed12} & 106 & 9 & 8.87$\pm$0.30 / 8.57$\pm$0.04 & +0.30 / +0.61 & +0.22 / +0.71 & 13.49 \\
+\texttt{speed10-12} & 78 & 27 & 9.89$\pm$0.25 / 9.96$\pm$0.75 & $-$0.07 / $-$0.34 & +0.12 / +0.03 & 13.68 \\
+\texttt{speed8-12} & 52 & 57 & 8.82$\pm$0.11 / 8.52$\pm$0.36 & +0.30 / $-$0.25 & +0.90 / $-$0.03 & 12.85 \\
+\texttt{alt100} & 100 & 16 & 8.22$\pm$0.15 / 7.82$\pm$0.05 & +0.40 / +0.39 & +0.22 / +0.34 & 10.69 \\
+\texttt{route} & 134 & 8 & 10.89$\pm$0.32 / 9.81$\pm$0.28 & +1.08 / +2.30 & +1.30 / +2.71 & 13.67 \\
+\texttt{wind} & 107 & 20 & 11.55$\pm$0.21 / 10.79$\pm$0.25 & +0.77 / +1.39 & +1.22 / +1.81 & 13.94 \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-\begin{figure}[h]
+\begin{figure}[t]
 \centering
-\includegraphics[width=0.62\linewidth]{gaps_tcn.png}\hfill
-\includegraphics[width=0.36\linewidth]{speed_tcn16.png}
-\caption{Left: held-out minus control per split for both TCNs, in power MAPE and energy RE (error bars combine the
-seed std of both). Right: s-TCN MAPE by test speed for the speed splits (solid) and their controls (dashed), on the
-same unseen flights.}
+\includegraphics[width=\linewidth]{gaps_tcn.png}
+\caption{Held-out minus control per split for both TCNs, in power MAPE (left) and energy RE (right). Error bars
+combine the seed std of both models.}
 \label{fig:gaps}
 \end{figure}
 
 \textbf{Holding out a grid condition barely hurts the TCNs} (Table~\ref{tab:gaps}, Fig.~\ref{fig:gaps}). For the
-s-TCN, holding out a payload, speed range or altitude costs at most 0.4 MAPE points. This is the same size as the
-spread between seeds; only \texttt{alt100} is consistent across seeds. Extrapolating to 500\,g costs only slightly
-more than interpolating to 250\,g. The b-TCN, with 15$\times$ the parameters, behaves the same way: within
-$\pm$0.3 points, except \texttt{speed8-12} (+0.90 MAPE but $-$0.03 RE, so it does not carry over to energy). Both
-TCNs beat Liu on every split, by 2.0--4.6 points. We do not report LSTM gaps, because most retrained LSTMs collapsed
+s-TCN it costs at most 0.4 MAPE points, about the spread between seeds; only \texttt{alt100} is consistent across
+seeds, and extrapolating to 500\,g costs barely more than interpolating to 250\,g. The b-TCN (15$\times$ the
+parameters) stays within $\pm$0.3 points except \texttt{speed8-12} (+0.90 MAPE, but $-$0.03 RE). Both TCNs beat
+Liu on every split, by 2.0--4.6 points. We report no LSTM gaps, because most retrained LSTMs collapsed
 (Section~\ref{sec:discussion}).
 
 \textbf{Speed is not an extrapolation in this dataset} (failure analysis). We expected the largest gap on speed,
-because parasitic power grows with airspeed. Even \texttt{speed8-12}, trained only on 4--6\,m/s flights, shows
-no gap (Fig.~\ref{fig:gaps}, right). The reason is in the data, not the model. Mean flight power is nearly flat
-across commanded speeds (521, 521, 522, 523, 535\,W at 4--12\,m/s), because take-off, climb, hover and landing look
-the same at every speed. In addition, the network sees \emph{measured} airspeed, which includes wind: the
-4--6\,m/s training flights already reach airspeeds of 11.9\,m/s (99th percentile) and 14.1\,m/s (max), versus
-18.1\,m/s for the test flights. A held-out speed is therefore mostly inside the training input range. This
-finding motivated the wind split, which shifts the airspeed input directly.
+since parasitic power grows with airspeed, yet even \texttt{speed8-12} (trained on 4--6\,m/s) shows none for the
+s-TCN. Mean flight power is nearly flat across commanded speeds (521--535\,W), because take-off, climb, hover and
+landing dominate, and the \emph{measured} airspeed the network sees includes wind: 4--6\,m/s training flights
+already reach 14.1\,m/s, versus 18.1\,m/s on test.
 
 \textbf{New route.} \texttt{route} has the largest gap (+1.08 MAPE, +2.30 RE), but it is not a clean
-comparison. All off-route flights are in the random split's test set, so the control has never seen them either.
+comparison: all off-route flights are in the random split's test set, so the control has never seen them either.
 
-\textbf{Wind is a real shift.} Unlike \texttt{route}, \texttt{wind} has a control that has seen the condition (it
-trains on 12 windy flights). Both TCNs are worse on unseen windy flights, by +0.77$\pm$0.33 (s-TCN) and
-+1.22$\pm$0.20 (b-TCN) MAPE points and +1.4 / +1.8 RE points: 2--6 times the combined seed spread, and larger than any
-grid split. Windy flights are also harder in general: even the control scores 10.7--10.8\% on them, versus 7--10\% on
-the grid splits. Training on some windy flights therefore helps, but does not remove the difficulty. One caveat: wind
-is clustered by flight date. Half of the 36 windy flights come from two days (10 and 8 flights), so the split also
-shifts date-dependent factors such as battery wear and temperature.
+\textbf{Wind is a real shift.} Unlike \texttt{route}'s, the \texttt{wind} control has seen windy flights (12 in
+training), yet both TCNs are worse on unseen windy flights by +0.77$\pm$0.33 (s-TCN) and +1.22$\pm$0.20 (b-TCN)
+MAPE points (+1.4 / +1.8 RE), 2--6 times the seed spread. Caveat: wind clusters by date (half of the 36 windy
+flights are from two days), so it is partly a date split.
 
-\textbf{Ablation (training-set size).} The controls share the random split's test flights, so they also show what
-less data costs. Test MAPE over 3 seeds is 8.86$\pm$0.26 with all 114 training flights, 8.64$\pm$0.13 with 87,
-10.33$\pm$0.86 with 78 and 8.88$\pm$0.21 with 52. Halving the training set costs nothing on average. The one bad
-subset (78 flights, the worst on every seed) suggests that \emph{which} flights are in training matters more than
-how many. A data-efficiency study therefore has to go below 52 flights and average over several subsets.
+\textbf{Ablation (training-set size).} The controls share the random split's test flights, so they show what less
+data costs: test MAPE is 8.86$\pm$0.26 with 114 training flights, 8.64$\pm$0.13 with 87, 10.33$\pm$0.86 with 78
+and 8.88$\pm$0.21 with 52. Halving the data costs nothing on average, but the 78-flight subset is the worst on
+every seed: \emph{which} flights are used matters more than how many.
 
 \section{Discussion}\label{sec:discussion}
-\textbf{Significance.} The published TCN generalizes across the dataset's payload, speed and altitude grid much
-better than we anticipated in the proposal. A planner can trust it on unseen grid points, but not yet on genuinely
-new conditions (route, wind). \textbf{Methodology matters.} Without the size-matched control and unseen-flight
-scoring, a random-split model would be scored on flights it trained on. The resulting ``gap'' would mix a
-condition shift, less training data and training error. \textbf{Challenges and limitations.} (i) Small $n$: some
-comparisons rest on 8--21 flights, and the seed spread is as large as most gaps. (ii) The grid is coarse: three payloads
-and five speeds, and a held-out level is still bracketed by measured airspeed. (iii) The wind estimate is
-noisy: legs of the same flight disagree by $\approx$4.5\,m/s, so it separates windy from calm days rather than
-ranking flights finely. (iv) Liu's constants were fit by the authors on all flights, which slightly favors Liu.
-(v) \textbf{Retrained LSTMs collapse.} 16 of our 30 LSTM runs end up predicting a constant. All 10 ReLU units in the
-output head are inactive on every input, so the output equals the last layer's bias and no gradient reaches the
-LSTM again. The remaining runs keep only 1--4 active units, so their validation MAPE swings by 3--6 points between
-epochs. The TCN head also loses 7--9 of its 10 units, but never the last one. We attribute the difference to the
-optimizer: with batch size 1, RMSprop takes about 90k steps per epoch, each roughly the size of the learning rate
-and driven by a single window, against 2.8k averaged Adam steps for the TCN. Our port matches the Keras defaults,
-and the authors' script saves snapshots every 50 flights rather than a final model, so we cannot tell whether
-their runs were affected. We therefore reproduce the LSTMs from the authors' weights but report no LSTM gaps.
-\textbf{Risk going forward.} A physics + TCN hybrid may not beat a TCN that already generalizes. We have
-therefore reframed it around data efficiency and new conditions (below).
+\textbf{Significance.} The published TCN generalizes across the payload, speed and altitude grid far better than
+we expected; a planner can trust it on unseen grid points, but not yet on new routes or in wind.
+\textbf{Methodology matters.} Without size-matched controls and unseen-flight scoring, the ``gap'' would mix the
+condition shift, less training data and training error. \textbf{Challenges and limitations.} (i) Some comparisons
+rest on 8--21 flights, and the seed spread is as large as most gaps. (ii) The grid is coarse, and a held-out speed
+is still bracketed by measured airspeed. (iii) The wind estimate is noisy ($\approx$4.5\,m/s between
+legs), so it separates windy from calm days rather than ranking flights. (iv) The authors fit Liu's
+constants on all flights, which slightly favors Liu. (v) \textbf{Retrained LSTMs collapse.} 16 of our 30 LSTM runs
+predict a constant: all 10 ReLU units of the output head are inactive on every input, so the output is the last
+bias and no gradient reaches the LSTM. Survivors keep 1--4 active units, hence 3--6 point validation swings. We
+attribute this to batch-size-1 RMSprop (90k learning-rate-sized steps per epoch vs 2.8k averaged Adam steps for the
+TCN); our port matches the Keras defaults and the authors' script saves only periodic snapshots, so we cannot tell
+whether their runs were affected. \textbf{Risk.} A hybrid may not beat a TCN that already generalizes.
 
 \section{Next steps}
 \begin{enumerate}
 \item \textbf{Physics + TCN hybrid} $\hat y_t = P_{\mathrm{Liu}}(x_t) + g_\theta(x_{t-19:t})$, with Liu's constants
-refit on each split's training flights. We will evaluate it as a learning curve (5--52 training flights, several
-random subsets per size) and on
-\texttt{route}/\texttt{wind}, where the pure TCN degrades most.
-\item \textbf{Uncertainty:} a Gaussian variance head (negative log-likelihood loss), a deep ensemble
-(from the 3 seeds we already train) and MC dropout. Report 90\% interval coverage on the held-out splits, then feed
-the predictive distribution into the authors' CVaR pipeline.
-\item \textbf{LSTM training and completeness:} make LSTM training reliable (a leaky ReLU head, a lower learning
-rate or Adam), then rerun both LSTMs on every split with 3 seeds; test whether the wind gap survives a
-date-matched control.
+refit per split, evaluated as a learning curve (5--52 training flights, several subsets per size) and on
+\texttt{route}/\texttt{wind}.
+\item \textbf{Uncertainty:} a Gaussian variance head (NLL loss), a deep ensemble (our 3 seeds) and MC dropout; 90\%
+interval coverage on the held-out splits, then the authors' CVaR pipeline.
+\item \textbf{LSTMs and completeness:} fix LSTM training (leaky ReLU head, lower learning rate or Adam), run both
+LSTMs on every split with 3 seeds, add a date-matched \texttt{wind} control; defer the proposed transformer.
 \end{enumerate}
-The small transformer from our proposal is deferred: the stress test shows the TCN is not limited by
-architecture on this grid.
 
 \section*{Team contributions and code}
 Code: \url{https://github.com/wouyang26/idl_project_38}.
-\textbf{Bill Ouyang}: PyTorch port of the TCN/LSTM and checkpoint conversion, reproduction of the paper's results,
-b-TCN stress-test runs.
-\textbf{Yashasvi Sorapalli}: 30-epoch s-TCN baseline and baseline figures, first held-out splits, b-LSTM
+\textbf{Bill Ouyang}: PyTorch port and checkpoint conversion, reproduction of the paper's results, b-TCN
 stress-test runs.
+\textbf{Yashasvi Sorapalli}: 30-epoch s-TCN baseline and figures, first held-out splits, b-LSTM stress-test runs.
 \textbf{Ashutosh Kumar}: s-LSTM experiments and stress-test runs, evaluation fixes.
-\textbf{Aaryan Desai}: data pipeline with checksums, Liu evaluation, size-matched controls and unseen-flight
-evaluation, nested speed splits, stress-test pipeline and s-TCN runs, wind estimation, wind split and its runs for
-all four networks, LSTM collapse diagnosis.
+\textbf{Aaryan Desai}: data pipeline, Liu evaluation, size-matched controls and unseen-flight scoring, nested speed
+splits, stress-test pipeline, s-TCN runs, wind split and its runs, LSTM collapse diagnosis.
 
 \small
 \begin{thebibliography}{9}
