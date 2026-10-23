@@ -1,0 +1,38 @@
+DeepEnergyModel(
+  (input_dropout): Dropout(p=0.0, inplace=False)
+  (backbone): LSTM(5, 64, num_layers=3, batch_first=True)
+  (power_embedding): Linear(in_features=66, out_features=10, bias=True)
+  (power_reg): Linear(in_features=10, out_features=1, bias=True)
+)
+85,417 parameters, split 'speed12': training on 106 flights, validating on 36, testing on 36
+epoch    1 | train loss 0.002762 rmse 0.0514 mape  4353.91 | val loss 0.007319 rmse 0.0824 mape    11.89
+epoch    2 | train loss 0.002667 rmse 0.0505 mape  4374.90 | val loss 0.011114 rmse 0.1018 mape    18.68
+epoch    3 | train loss 0.002679 rmse 0.0507 mape  4425.74 | val loss 0.008512 rmse 0.0887 mape    12.83
+epoch    4 | train loss 0.002691 rmse 0.0508 mape  4371.24 | val loss 0.006013 rmse 0.0744 mape    11.56
+epoch    5 | train loss 0.002687 rmse 0.0508 mape  4344.58 | val loss 0.014740 rmse 0.1172 mape    16.70
+epoch    6 | train loss 0.002674 rmse 0.0506 mape  4370.93 | val loss 0.015616 rmse 0.1201 mape    16.15
+epoch    7 | train loss 0.002689 rmse 0.0508 mape  4417.27 | val loss 0.008121 rmse 0.0865 mape    12.52
+epoch    8 | train loss 0.002690 rmse 0.0508 mape  4277.95 | val loss 0.015388 rmse 0.1206 mape    17.82
+epoch    9 | train loss 0.002696 rmse 0.0508 mape  4391.34 | val loss 0.011899 rmse 0.1036 mape    15.63
+epoch   10 | train loss 0.002675 rmse 0.0506 mape  4364.83 | val loss 0.006832 rmse 0.0788 mape    12.37
+epoch   11 | train loss 0.002728 rmse 0.0511 mape  4369.12 | val loss 0.006417 rmse 0.0765 mape    11.61
+epoch   12 | train loss 0.002646 rmse 0.0504 mape  4368.24 | val loss 0.006614 rmse 0.0774 mape    12.02
+epoch   13 | train loss 0.002631 rmse 0.0502 mape  4351.32 | val loss 0.009469 rmse 0.0941 mape    13.78
+epoch   14 | train loss 0.002583 rmse 0.0498 mape  4368.49 | val loss 0.034718 rmse 0.1855 mape    30.83
+epoch   15 | train loss 0.002711 rmse 0.0509 mape  4358.79 | val loss 0.007122 rmse 0.0807 mape    12.07
+epoch   16 | train loss 0.002705 rmse 0.0509 mape  4430.24 | val loss 0.008160 rmse 0.0867 mape    13.01
+epoch   17 | train loss 0.002739 rmse 0.0512 mape  4370.81 | val loss 0.007799 rmse 0.0845 mape    12.39
+epoch   18 | train loss 0.002710 rmse 0.0509 mape  4383.54 | val loss 0.007699 rmse 0.0854 mape    14.84
+epoch   19 | train loss 0.003225 rmse 0.0547 mape  5089.84 | val loss 0.009767 rmse 0.0929 mape    13.98
+epoch   20 | train loss 0.005101 rmse 0.0690 mape  5088.63 | val loss 0.010200 rmse 0.0949 mape    14.25
+epoch   21 | train loss 0.005127 rmse 0.0691 mape  5107.68 | val loss 0.011658 rmse 0.1014 mape    15.27
+epoch   22 | train loss 0.005154 rmse 0.0693 mape  5123.67 | val loss 0.009968 rmse 0.0965 mape    17.44
+epoch   23 | train loss 0.005076 rmse 0.0689 mape  5101.09 | val loss 0.007755 rmse 0.0839 mape    13.17
+epoch   24 | train loss 0.005107 rmse 0.0690 mape  5126.38 | val loss 0.008645 rmse 0.0899 mape    15.76
+epoch   25 | train loss 0.005101 rmse 0.0690 mape  5128.35 | val loss 0.008181 rmse 0.0857 mape    13.18
+epoch   26 | train loss 0.005063 rmse 0.0689 mape  5127.55 | val loss 0.010454 rmse 0.0987 mape    17.99
+epoch   27 | train loss 0.005058 rmse 0.0688 mape  5108.44 | val loss 0.009768 rmse 0.0929 mape    13.98
+epoch   28 | train loss 0.005069 rmse 0.0689 mape  5125.02 | val loss 0.010200 rmse 0.0949 mape    14.25
+epoch   29 | train loss 0.005081 rmse 0.0690 mape  5125.01 | val loss 0.011658 rmse 0.1014 mape    15.27
+epoch   30 | train loss 0.005135 rmse 0.0692 mape  5131.77 | val loss 0.009990 rmse 0.0966 mape    17.46
+saved Results/ckpts/lstm_20_0.0_64_3_RMSprop_speed12/final.pt and Results/CsvResults/lstm_20_0.0_64_3_RMSprop_speed12/csv_result.csv
