@@ -89,6 +89,8 @@ The MAPE in the training log is on normalized power. Use `evaluate_torch.py` for
 | `splits.py` | Train/val/test splits, including the held-out operating-condition splits (`python splits.py` prints them) |
 | `models_torch/` | The four converted pretrained models |
 | `docs/baseline/` | Figures, `per_flight_metrics.csv` and `train_log.txt` for the 30-epoch s-TCN baseline |
+| `scripts/seed_results.py` | Stress-test results kept per seed (`per_seed.csv`, `seed<k>/`); used for the b-LSTM |
+| `docs/stress_test_lstm64/` | b-LSTM stress-test results and training logs, per seed |
 
 ## Baseline results: s-TCN, 30 epochs
 
@@ -255,6 +257,38 @@ Figures and table: `docs/stress_test/` (`gaps.png`, `speed_tcn16.png`, `gaps.csv
 - Even `speed8-12` (train on 4–6 m/s) shows no gap. Mean flight power varies only ~3 % across commanded speeds
   (521–534 W), because takeoff, climb, hover and landing look the same at every speed, and wind spreads the measured
   airspeed (train p99 11.9 m/s, max 14.1). So within this dataset speed is not a real extrapolation.
+
+#### b-LSTM, 30 epochs, seed 0
+
+```bash
+python train_torch.py --net_type lstm --units 64 --n_hidden 3 --optimizer RMSprop --stateful --batch_size 1 \
+    --total_epochs 30 --seed 0 --split <split>       # all 11 splits, ~2.5-7 h each on a 4-core laptop CPU
+python scripts/seed_results.py --ckpts 'Results/ckpts/lstm_20_0.0_64_3_RMSprop*/final.pt' --out docs/stress_test_lstm64
+```
+
+Same evaluation as the s-TCN table (`final.pt`, unseen flights), one seed only, so no std:
+
+| split | n | MAPE held-out / control | gap | RE gap | Liu MAPE |
+|---|---|---|---|---|---|
+| `payload500` | 21 | 20.72 / 10.56 | +10.16 | +15.38 | 11.04 |
+| `payload250` | 16 | 15.23 / 13.93 | +1.30 | +1.65 | 10.79 |
+| `speed12` | 9 | 17.87 / 18.07 | −0.20 | −0.15 | 13.49 |
+| `alt100` | 16 | 16.23 / 15.61 | +0.63 | +1.83 | 10.69 |
+| `route` | 8 | 13.53 / 18.95 | −5.41 | −3.28 | 13.67 |
+| `speed10-12` | 27 | 14.47 / 14.99 | −0.52 | −1.23 | 13.68 |
+| `speed8-12` | 57 | 13.81 / 15.63 | −1.83 | −5.19 | 12.85 |
+
+Results per seed: `docs/stress_test_lstm64/` (`per_seed.csv`; `seed0/` has `gaps.csv`, `gaps.png`,
+`speed_lstm64.png` and the 11 training logs).
+
+- The retrained b-LSTM is well below the paper's: 16.39 % test MAPE on the random split vs 11.47 for the pretrained
+  b-LSTM, and worse than Liu on every split. Training is unstable (no gradient clipping): validation MAPE of the
+  `random` run swings between 10.7 and 23.6 from epoch to epoch (23.6 at epoch 29), so `final.pt` depends a lot on
+  where training stops.
+- Because of that, the gaps are mostly checkpoint noise. The same `random_subsampled` control scores 10.6–19.0
+  depending on the flight set, and `route` / `speed8-12` come out *better* than their controls.
+- `payload500` (+10 MAPE, +15 RE) is the only large gap, but with one seed and this noise it needs more seeds (or
+  clipping / a best-validation checkpoint) before it means anything.
 
 ### Liu model on the held-out splits
 
