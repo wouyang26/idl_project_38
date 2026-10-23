@@ -9,7 +9,11 @@
     route       test = all flights off the main route
     speed10-12  test = all 10 and 12 m/s flights    (wider speed extrapolation: train on 4-8 m/s)
     speed8-12   test = all 8, 10 and 12 m/s flights (train on 4-6 m/s only)
+    wind        test = flights with cruise wind > 4.34 m/s (the windiest ~20 % of main-route flights; wind estimated
+                from the anemometer + GNSS/INS logs by utils/wind.py)
     random_subsampled, random_sub_<split>  data-size controls: random split, train cut to that split's size
+    random_sub_wind  data-size control for wind: test = a random half of the wind test flights; train (cut to the
+                wind split's size) and validation are drawn from the other main-route flights, windy half included
 
 For the held-out splits the validation set is drawn (seed 42, 25 %) from the remaining flights, so it stays
 inside the training conditions, and every flight appears at most once. The condition splits (payload, speed,
@@ -22,6 +26,11 @@ mislabels some main-route flights (e.g. 276, 277 as "Test"). It is read from dat
 (scripts/download_data.sh puts it there) or downloaded once; if neither works, the flight sheet is used and a
 warning is printed. The main route is the most common route label in whichever source is used.
 
+The per-flight wind comes from data/kilthub/wind.csv (written by `python -m utils.wind`) or, if that is missing, is
+computed from the KiltHub logs in data/kilthub/flights/ (scripts/download_data.sh puts them there). It is the mean
+wind over each flight's cruise, so its scatter between the legs of the route is ~4 m/s: the wind split separates
+windy from calm days rather than ranking flights finely. Wind is strongly clustered by date.
+
     python splits.py            # prints the route source and the size and conditions of every split
 """
 import hashlib
@@ -33,12 +42,18 @@ import numpy as np
 import pandas as pd
 
 from data_utils import get_flights_and_ranges
+from utils.wind import load_wind
 
 SPLITS = ['random', 'payload500', 'payload250', 'speed12', 'alt100', 'route',
-          'speed10-12', 'speed8-12', 'random_subsampled', 'random_sub_speed10-12', 'random_sub_speed8-12']
+          'speed10-12', 'speed8-12', 'wind',
+          'random_subsampled', 'random_sub_speed10-12', 'random_sub_speed8-12', 'random_sub_wind']
 CONTROLS = {'random_subsampled': 'payload500',
             'random_sub_speed10-12': 'speed10-12',
-            'random_sub_speed8-12': 'speed8-12'}
+            'random_sub_speed8-12': 'speed8-12',
+            'random_sub_wind': 'wind'}
+# Controls whose held-out condition is rare in the random split's test set, so few held-out flights would be unseen
+# by both models; these test on half of the held-out flights and may train on the other half instead.
+HALF_CONTROLS = ['random_sub_wind']
 
 FLIGHT_SHEET = 'Flight Sheet.xlsx'
 NO_MAPE_FLIGHTS = [232]  # power <= 0 W at some steps; kept for training, never a held-out test flight
@@ -47,6 +62,8 @@ KILTHUB_PARAMS = os.path.join('kilthub', 'parameters.csv')
 KILTHUB_MD5 = '7daa897a1af7847b592ccb7a459477ee'  # from api.figshare.com/v2/articles/12683453
 KILTHUB_URLS = ['https://ndownloader.figshare.com/files/26385034',
                 'https://kilthub.cmu.edu/ndownloader/files/26385034']
+KILTHUB_WIND = os.path.join('kilthub', 'wind.csv')
+WIND_THRESHOLD = 4.34  # m/s, 80th percentile of the main-route flights' cruise wind
 
 
 def _md5(raw):
@@ -95,9 +112,22 @@ def _kilthub_routes(path):
     return dict(zip(params[flight_col].astype(int), params[route_col].astype(str).str.strip()))
 
 
+def _wind(data_dir):
+    """{flight: cruise wind (m/s)}, NaN for flights without cruise; None if the KiltHub logs are unavailable."""
+    path = os.path.join(data_dir, KILTHUB_WIND)
+    if os.path.exists(path):
+        return pd.read_csv(path, index_col='flight')['wind']
+    kdir = os.path.join(data_dir, 'kilthub')
+    if os.path.isdir(os.path.join(kdir, 'flights')):
+        return load_wind(kdir)['wind']
+    warnings.warn('no KiltHub flight logs in {}; run scripts/download_data.sh for the wind split'.format(kdir))
+    return None
+
+
 def load_conditions(data_dir='./data/', download=True):
-    """Commanded payload (g), speed (m/s), altitude (m, str: '25-50-100-25' for mixed), route and
-    main_route (bool) per flight; `cond.attrs['route_source']` says where the routes came from."""
+    """Commanded payload (g), speed (m/s), altitude (m, str: '25-50-100-25' for mixed), route, main_route (bool)
+    and estimated cruise wind (m/s, NaN if unknown) per flight; `cond.attrs['route_source']` says where the routes
+    came from."""
     sheet = pd.read_excel(os.path.join(data_dir, FLIGHT_SHEET))
     sheet = sheet.dropna(subset=['Flight #'])
     cond = pd.DataFrame({
@@ -122,6 +152,8 @@ def load_conditions(data_dir='./data/', download=True):
                       'run scripts/download_data.sh or retry with network access for the KiltHub routes')
 
     cond['main_route'] = cond['route'] == cond['route'].mode()[0]
+    wind = _wind(data_dir)
+    cond['wind'] = np.nan if wind is None else wind.reindex(cond.index).values
     cond.attrs['route_source'] = source
     return cond
 
@@ -141,6 +173,10 @@ def _held_out(cond, split):
         return cond['speed'] >= 8, off_route
     if split == 'alt100':
         return cond['altitude'] == '100', off_route | cond['altitude'].str.contains('-')
+    if split == 'wind':
+        if cond.loc[~off_route, 'wind'].isna().all():
+            raise ValueError('no wind estimates; run scripts/download_data.sh for the KiltHub flight logs')
+        return cond['wind'] > WIND_THRESHOLD, off_route
     if split == 'route':
         return off_route, np.zeros(len(cond), dtype=bool)
     raise ValueError('unknown split {!r}, expected one of {}'.format(split, SPLITS))
@@ -156,12 +192,19 @@ def get_split(all_data, split='random', data_dir='./data/', val_split=0.25, rand
         return test_range, val_range, train_range
 
     if split in CONTROLS:
-        test_range, val_range, train_full = get_split(all_data, 'random', data_dir, val_split, random_seed)
         if cond is None:
             cond = load_conditions(data_dir)
-        n = len(get_split(all_data, CONTROLS[split], data_dir, val_split, random_seed, cond)[2])
+        held_test, _, held_train = get_split(all_data, CONTROLS[split], data_dir, val_split, random_seed, cond)
         rng = np.random.RandomState(random_seed)
-        train_range = np.sort(rng.choice(train_full, size=n, replace=False))
+        if split in HALF_CONTROLS:
+            test_range = np.sort(rng.choice(held_test, size=len(held_test) // 2, replace=False))
+            main = cond.loc[sorted(all_data)]
+            pool = np.setdiff1d(main.index[main['main_route']].values, test_range)
+            val_range = np.sort(rng.choice(pool, size=int(np.ceil(len(pool) * val_split)), replace=False))
+            train_full = np.setdiff1d(pool, val_range)
+        else:
+            test_range, val_range, train_full = get_split(all_data, 'random', data_dir, val_split, random_seed)
+        train_range = np.sort(rng.choice(train_full, size=len(held_train), replace=False))
         return test_range, val_range, train_range
 
     if cond is None:
@@ -194,5 +237,6 @@ if __name__ == '__main__':
         rows.append({'split': split, 'train': len(train), 'val': len(val), 'test': len(np.unique(test)),
                      'test payloads (g)': sorted(t['payload'].unique().astype(int)),
                      'test speeds (m/s)': sorted(t['speed'].unique()),
-                     'test altitudes (m)': sorted(t['altitude'].unique())})
+                     'test altitudes (m)': sorted(t['altitude'].unique()),
+                     'test wind (m/s)': '{:.1f}-{:.1f}'.format(t['wind'].min(), t['wind'].max())})
     print(pd.DataFrame(rows).to_string(index=False))
