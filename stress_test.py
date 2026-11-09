@@ -55,9 +55,10 @@ def per_flight(paths, all_data, device, liu=True):
             model, inputs, ckpt = load_model(path, map_location=device)
             data, data_min, data_max, _, _, _ = process_data(all_data, stats=(ckpt['data_min'], ckpt['data_max']), **inputs)
             tensors = create_tensors(data, flights, device=device, **inputs)
-            size = inputs['nb_filters'] if inputs['net_type'] == 'tcn' else inputs['units']
+            size = inputs['nb_filters'] if inputs['net_type'] in ('tcn', 'residual') else inputs['units']
             run = {'run': os.path.basename(os.path.dirname(path)), 'arch': '{}{}'.format(inputs['net_type'], size),
-                   'split': inputs['split'], 'seed': ckpt['seed']}
+                   'split': inputs['split'], 'seed': ckpt['seed'],
+                   'train_size': inputs.get('train_size'), 'subset_seed': inputs.get('subset_seed')}
             seen = set(ckpt['ranges']['train'] + ckpt['ranges']['val'])
         for f in flights:
             if path == 'liu':
@@ -171,6 +172,9 @@ if __name__ == '__main__':
         df.to_csv(csv, index=False)
 
     g, flights = compare(df, all_data, cond, data_dir)
+    if g.empty:  # e.g. only learning-curve runs so far
+        print('no held-out split with its control yet; per-flight errors saved in', csv)
+        raise SystemExit
     g.to_csv(os.path.join(args.out, 'gaps.csv'), index=False)
     cols = ['arch', 'split', 'n', 'heldout_mape', 'control_mape', 'gap_mape', 'heldout_re', 'control_re', 'gap_re',
             'liu_mape']

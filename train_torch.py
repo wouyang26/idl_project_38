@@ -1,4 +1,5 @@
-"""PyTorch version of `train.py`. Same arguments, plus --n_hidden, --save_every, --device, --seed and --split.
+"""PyTorch version of `train.py`. Same arguments, plus --n_hidden, --save_every, --device, --seed, --split,
+--train_size / --subset_seed (learning curves) and --net_type residual (Liu physics + TCN correction).
 
     python train_torch.py --net_type tcn --nb_filters 16 --kernel_size 2 --n_layers 5 --total_epochs 100
     python train_torch.py --nb_filters 16 --kernel_size 2 --n_layers 5 --total_epochs 30 --split speed12
@@ -20,7 +21,7 @@ import torch
 import torch.nn.functional as F
 
 from data_utils import get_dataset, load_dataset, process_data
-from splits import SPLITS, get_split
+from splits import SPLITS, get_split, subsample_train
 from torch_data import create_tensors, iterate_batches, predict_flight, regression_metrics
 from torch_model import build_model, load_inputs
 
@@ -80,12 +81,15 @@ if __name__ == '__main__':
     parser.add_argument('--optimizer', default='Adam', choices=list(OPTIMIZERS), help='Optimizer used by the neural network.')
     parser.add_argument('--dropout', default=0., type=float, help='Dropout used by the neural network.')
     parser.add_argument('--units', default=32, type=int, help='(For LSTM) The number of units in each layer.')
-    parser.add_argument('--net_type', default='tcn', choices=['lstm', 'tcn'], help='The type of net to train.')
+    parser.add_argument('--net_type', default='tcn', choices=['lstm', 'tcn', 'residual'],
+                        help="The type of net to train; 'residual' = Liu physics + TCN correction (Liu refit on the training flights).")
     parser.add_argument('--stateful', action='store_true', help='Carry the LSTM state across batches of a flight.')
     parser.add_argument('--save_every', default=10, type=int, help='Save a checkpoint every this many epochs.')
     parser.add_argument('--device', default='cuda' if torch.cuda.is_available() else 'cpu')
     parser.add_argument('--seed', default=0, type=int, help='Seed for the weight initialization / dropout.')
     parser.add_argument('--split', default='random', choices=SPLITS, help='Flight split (see splits.py); held-out splits test on unseen conditions.')
+    parser.add_argument('--train_size', default=None, type=int, help="Cut the split's training flights to this many (learning curves).")
+    parser.add_argument('--subset_seed', default=0, type=int, help='Which random subset --train_size takes.')
     args = parser.parse_args()
 
     directory = os.path.join(args.directory, '')
@@ -102,6 +106,8 @@ if __name__ == '__main__':
     stateful = inputs['net_type'] == 'lstm' and inputs['stateful']
 
     ranges = get_split(all_data, inputs['split'], directory + 'data/')
+    if inputs['train_size'] is not None:  # same val / test flights, a random subset of the training flights
+        ranges = subsample_train(ranges, inputs['train_size'], inputs['subset_seed'])
     data, data_min, data_max, test_range, train_range, val_range = process_data(all_data, ranges=ranges, **inputs)
     train_tensors = create_tensors(data, train_range, device=args.device, **inputs)
     val_tensors = create_tensors(data, val_range, device=args.device, **inputs)
@@ -113,6 +119,8 @@ if __name__ == '__main__':
         save_str = '{net_type}_{lookback}_{nb_filters}_{kernel_size}_{nb_stacks}_{n_layers}'.format(**inputs)
     if inputs['split'] != 'random':  # keep the original names for the paper's split
         save_str += '_' + inputs['split']
+    if inputs['train_size'] is not None:
+        save_str += '_n{}_k{}'.format(inputs['train_size'], inputs['subset_seed'])
     if args.seed != 0:
         save_str += '_s{}'.format(args.seed)
     output_dir = os.path.join(args.output, 'Results')
@@ -122,6 +130,12 @@ if __name__ == '__main__':
     csv_dir.mkdir(parents=True, exist_ok=True)
 
     model = build_model(inputs).to(args.device)
+    if inputs['net_type'] == 'residual':  # Liu refit on the training flights only (never validation or test)
+        from physics_torch import fit_liu
+        liu = fit_liu(all_data, train_range)
+        model.set_physics(liu, data_min, data_max)
+        print('Liu constants (k1, k2, c2, c4, c5) refit on {} training flights: {}'.format(
+            len(train_range), np.round(liu, 5).tolist()))
     optimizer = OPTIMIZERS[inputs['optimizer']](model.parameters())
     print(model)
     print('{:,} parameters, split {!r}: training on {} flights, validating on {}, testing on {}'.format(
