@@ -272,6 +272,15 @@ def get_split(all_data, split='random', data_dir='./data/', val_split=0.25, rand
     return test_range, val_range, train_range
 
 
+def subsample_train(ranges, train_size, subset_seed=0):
+    """(test, val, train) with train cut to a random `train_size` flights (learning curves); val and test kept."""
+    test_range, val_range, train_range = ranges
+    if train_size > len(train_range):
+        raise ValueError('train_size {} > {} training flights'.format(train_size, len(train_range)))
+    rng = np.random.RandomState(subset_seed)
+    return test_range, val_range, np.sort(rng.choice(train_range, train_size, replace=False))
+
+
 if __name__ == '__main__':
     from data_utils import load_dataset
     all_data = load_dataset('./data/')

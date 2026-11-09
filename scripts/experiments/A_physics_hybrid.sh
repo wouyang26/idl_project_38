@@ -3,17 +3,12 @@
 #
 #   bash scripts/experiments/A_physics_hybrid.sh            # from the repo root, after scripts/download_data.sh
 #
-# Needs the hybrid code (fit_liu.py, train_torch.py --net_type residual / --train_size / --subset_seed); stops with a
-# message if it is missing. Runs that already have final.pt are skipped, so it can be re-run after an interruption.
+# Up to 62 training runs (~2.5 min each on a 5070 Ti, ~10 min on a laptop CPU). Runs that already have final.pt are skipped,
+# so it can be re-run after an interruption. A2 needs the s-TCN runs of wind / random_sub_wind / route /
+# random_subsampled in Results/ckpts (it trains any that are missing).
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 mkdir -p Results
-
-help=$(python train_torch.py --help)
-for need in "\{[^}]*residual[^}]*\}" "--train_size" "--subset_seed"; do  # residual: a --net_type choice
-    grep -qE -- "$need" <<<"$help" || { echo "train_torch.py has no '$need' yet (see docs/experiments/A_physics_hybrid.md)"; exit 1; }
-done
-[ -f fit_liu.py ] || { echo "fit_liu.py is missing (see docs/experiments/A_physics_hybrid.md)"; exit 1; }
 
 TCN="--nb_filters 16 --kernel_size 2 --n_layers 5 --total_epochs 30"
 A2_SPLITS="wind random_sub_wind route random_subsampled"
@@ -28,18 +23,16 @@ train() {  # train <run name> <args...>
     python train_torch.py "$@" > "Results/train_${run}.log" 2>&1
 }
 
-# A1: Liu refit (and alpha * Liu) on every split's training flights; no GPU
-for split in random payload500 payload250 speed12 alt100 route speed10-12 speed8-12 wind windy_days \
-             random_subsampled random_sub_speed10-12 random_sub_speed8-12 random_sub_wind random_sub_windy_days; do
-    python fit_liu.py --split "$split"
-    python fit_liu.py --split "$split" --scale_only
-done
+# A1: Liu refit (and alpha * Liu) on every held-out split's training flights; no training, ~15 s
+python fit_liu.py
 
-# A2: residual hybrid on wind / route and their controls, 3 seeds (s-TCN runs already exist)
-for split in $A2_SPLITS; do
-    for seed in $SEEDS; do
-        run="residual_20_16_2_1_5_${split}"; [ "$seed" != 0 ] && run="${run}_s${seed}"
-        train "$run" --net_type residual $TCN --split "$split" --seed "$seed"
+# A2: residual hybrid vs s-TCN on wind / route and their controls, 3 seeds
+for net in tcn residual; do
+    for split in $A2_SPLITS; do
+        for seed in $SEEDS; do
+            run="${net}_20_16_2_1_5_${split}"; [ "$seed" != 0 ] && run="${run}_s${seed}"
+            train "$run" --net_type "$net" $TCN --split "$split" --seed "$seed"
+        done
     done
 done
 
@@ -51,6 +44,11 @@ for n in $SIZES; do
     done
 done
 
-python stress_test.py --ckpts 'Results/ckpts/residual_*/final.pt' --out Results/stress_test
-python stress_test.py --ckpts 'Results/ckpts/*_n*_k*/final.pt' --out Results/stress_test
-echo "done: A2 in Results/stress_test/gaps.csv; A3 per-flight errors in Results/stress_test/per_flight.csv"
+# the full-size random-split runs are the N = 114 point of the curve
+train "tcn_20_16_2_1_5" --net_type tcn $TCN
+train "residual_20_16_2_1_5" --net_type residual $TCN
+
+python stress_test.py --ckpts 'Results/ckpts/*_20_16_2_1_5*/final.pt' --out Results/stress_test
+python scripts/learning_curve.py --per_flight Results/stress_test/per_flight.csv --out Results/learning_curve
+echo "done: A1 Results/liu/liu_refit.csv, A2 Results/stress_test/gaps.csv (tcn16 vs residual16 rows),"
+echo "      A3 Results/learning_curve/learning_curve.{csv,png}"

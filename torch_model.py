@@ -6,6 +6,8 @@ Layer-for-layer equivalent of `create_advanced_net(..., input_type='concat')`:
     time_invariant (B, 2) ----------------------------------------------+--> concat
         --> Linear(F+2, 10) + ReLU (power_embedding) --> Linear(10, 1) (power_reg)
 
+`ResidualEnergyModel` (net_type 'residual') adds Liu's physics power to the TCN's output.
+
 Pretrained Keras checkpoints can be converted with `port_weights.py`.
 """
 import math
@@ -173,8 +175,44 @@ class DeepEnergyModel(nn.Module):
                             p[m.hidden_size:2 * m.hidden_size] = 1.
 
 
+class ResidualEnergyModel(DeepEnergyModel):
+    """Physics + TCN hybrid: Liu's power at the window's last step plus the TCN's correction, in normalized power.
+
+    Liu needs raw inputs, so the model keeps the normalization stats and Liu's constants as buffers (saved in the
+    checkpoint; set them with `set_physics`). The last layer starts at zero, so an untrained model is exactly Liu.
+    """
+
+    def __init__(self, **inputs):
+        super().__init__(**dict(inputs, net_type='tcn'))
+        self.register_buffer('liu_consts', torch.zeros(5))
+        self.register_buffer('x_min', torch.zeros(5))  # airspeed_x, airspeed_y, vertspd, aoa, airspeed
+        self.register_buffer('x_max', torch.ones(5))
+        self.register_buffer('p_range', torch.tensor([0., 1.]))  # power min, max
+        nn.init.zeros_(self.power_reg.weight)
+        nn.init.zeros_(self.power_reg.bias)
+
+    def set_physics(self, consts, data_min, data_max):
+        """Liu constants [k1, k2, c2, c4, c5] and the (data_min, data_max) of `process_data`."""
+        self.liu_consts.copy_(torch.as_tensor(consts))
+        self.x_min.copy_(torch.as_tensor(data_min[:5]))
+        self.x_max.copy_(torch.as_tensor(data_max[:5]))
+        self.p_range.copy_(torch.as_tensor([data_min[-1], data_max[-1]]))
+
+    def liu_normalized(self, x_time, x_static):
+        from physics_torch import liu_power
+        raw = x_time[:, -1] * (self.x_max - self.x_min) + self.x_min
+        power = liu_power(raw[:, 2], raw[:, 4], raw[:, 3], x_static[:, 1], self.liu_consts)
+        return ((power - self.p_range[0]) / (self.p_range[1] - self.p_range[0])).unsqueeze(-1)
+
+    def forward(self, x_time, x_static=None, state=None):
+        correction, state = super().forward(x_time, x_static, state)
+        return self.liu_normalized(x_time, x_static) + correction, state
+
+
 def build_model(inputs):
     """`create_advanced_net` equivalent; `inputs` comes from `load_inputs`."""
+    if inputs['net_type'] == 'residual':
+        return ResidualEnergyModel(**inputs)
     return DeepEnergyModel(**inputs)
 
 

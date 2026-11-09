@@ -51,6 +51,9 @@ The TCNs train fine on a CPU: the 30-epoch s-TCN below took about 10 minutes on 
 # s-TCN (use --nb_filters 64 for b-TCN)
 python train_torch.py --nb_filters 16 --kernel_size 2 --n_layers 5 --total_epochs 30
 
+# physics + TCN hybrid: Liu (refit on the training flights) + s-TCN correction; see docs/experiments/A_physics_hybrid.md
+python train_torch.py --net_type residual --nb_filters 16 --kernel_size 2 --n_layers 5 --total_epochs 30
+
 # s-LSTM (use --units 64 for b-LSTM); slow, because batch size 1 is sequential
 python train_torch.py --net_type lstm --units 16 --n_hidden 3 --optimizer RMSprop --stateful --batch_size 1
 ```
@@ -87,6 +90,10 @@ The MAPE in the training log is on normalized power. Use `evaluate_torch.py` for
 | `port_weights.py` | Keras checkpoint → PyTorch converter |
 | `plot_results.py` | Figures and per-flight metrics for a trained checkpoint (the baseline results below) |
 | `splits.py` | Train/val/test splits, including the held-out operating-condition splits (`python splits.py` prints them) |
+| `physics_torch.py` | Liu's power model in PyTorch (induced / profile / parasitic terms) and its least-squares refit |
+| `fit_liu.py` | Liu refit on each held-out split's training flights, scored like the stress test (experiment A1) |
+| `scripts/learning_curve.py` | Test error vs number of training flights, hybrid vs TCN vs refit Liu (experiment A3) |
+| `docs/experiments/` | Experiment specs; `scripts/experiments/*.sh` run them (A: physics + TCN hybrid, C: wind vs day) |
 | `models_torch/` | The four converted pretrained models |
 | `docs/baseline/` | Figures, `per_flight_metrics.csv` and `train_log.txt` for the 30-epoch s-TCN baseline |
 
