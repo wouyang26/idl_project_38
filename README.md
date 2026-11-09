@@ -187,6 +187,8 @@ Payload is stored in kg (0, 0.25, 0.5) in `processed.csv`.
 | `random_sub_speed10-12` / `random_sub_speed8-12` | the paper's split | 78 / 52 | 38 | 35 | controls matched to the speed splits' train sizes |
 | `wind` | main-route flights with cruise wind > 4.34 m/s | 107 | 36 | 36 | the windiest ~20 % of flights |
 | `random_sub_wind` | a random half (18) of the `wind` test flights | 107 | 41 | 18 | control for `wind` (see below) |
+| `windy_days` | the calm flights of the 4 windy days | 108 | 36 | 11 | the "different day" effect without wind (see below) |
+| `random_sub_windy_days` | the same 11 flights | 108 | 42 | 11 | date-matched control for `windy_days` |
 
 Sizes are with routes from the flight sheet (the fallback, see below), except the speed10-12 / speed8-12 / wind rows
 and their controls, which use KiltHub routes. With KiltHub routes, 276 and 277 move to the main route: `route` tests on
@@ -217,6 +219,19 @@ exact sizes.
 - `random_sub_wind` differs from the other controls: the random split's test set holds only a few windy flights,
   so it tests on a random half of the `wind` test flights and trains (cut to `wind`'s size) and validates on the
   other main-route flights, windy half included. This leaves 20 windy flights that neither model saw.
+- **Wind or day?** Wind is clustered by date, so the `wind` gap could be a "different day" effect (battery,
+  temperature, calibration). A windy day is a date with at least half of its main-route flights windy: 2019-06-05,
+  06-11, 06-25 and 06-29 (35 flights, 24 windy, 11 calm; dates from `parameters.csv`). Two checks, in
+  `scripts/wind_vs_day.py`:
+  1. No new training: of the 20 unseen `wind` test flights, 12 are on windy days (the `wind` model trained on only 8
+     flights of those days) and 8 are windy flights on other days, whose days it trained on. A gap that persists on
+     those 8 is wind, not the day.
+  2. `windy_days` vs `random_sub_windy_days`: both test on the 11 calm flights of the windy days. `windy_days` never
+     trains on those days; its control trains on all 24 of their other flights (+ random main-route flights to the
+     same size, 108). Neither saw much wind on the test flights, so this gap is the day effect alone.
+
+  `bash scripts/experiments/C_wind_date.sh` trains both TCNs on these (3 seeds, skipping existing runs) and writes
+  `Results/wind_vs_day/wind_vs_day.csv`.
 - Checkpoints store their split, seed, flight lists and normalization stats. `evaluate_torch.py` and
   `plot_results.py` normalize with the checkpoint's own stats; the ported pretrained models don't store them and
   fall back to the random split, which is what they were trained on. This does not change the baseline numbers.
@@ -265,7 +280,8 @@ included), `speed_<model>.png`.
 - Holding out a payload, speed or altitude barely hurts either TCN; only `alt100` is consistent across seeds for the
   s-TCN. Both TCNs beat Liu on every split.
 - `wind` is the clearest result: both TCNs are worse on unseen windy flights (2–6× the seed spread), even though its
-  control has trained on windy flights. Wind is clustered by date, so this is partly a date shift.
+  control has trained on windy flights. Wind is clustered by date, so this is partly a date shift; `windy_days` and
+  `scripts/wind_vs_day.py` separate the two (see [Held-out splits](#held-out-splits)).
 - The LSTM rows in `gaps.csv` are not meaningful: most retrained LSTMs collapsed (see [Known quirks](#known-quirks)).
 - `route` is not a clean comparison: all off-route flights are in the random test set, so the control never saw
   them either.

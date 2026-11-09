@@ -11,9 +11,14 @@
     speed8-12   test = all 8, 10 and 12 m/s flights (train on 4-6 m/s only)
     wind        test = flights with cruise wind > 4.34 m/s (the windiest ~20 % of main-route flights; wind estimated
                 from the anemometer + GNSS/INS logs by utils/wind.py)
+    windy_days  test = the calm flights (wind <= 4.34 m/s) of the windy days, i.e. the dates on which at least half
+                of the main-route flights are windy; no flight of those days is trained on. With its control this
+                measures the "different day" effect (battery, temperature, calibration) without wind.
     random_subsampled, random_sub_<split>  data-size controls: random split, train cut to that split's size
     random_sub_wind  data-size control for wind: test = a random half of the wind test flights; train (cut to the
                 wind split's size) and validation are drawn from the other main-route flights, windy half included
+    random_sub_windy_days  date-matched control for windy_days: the same test flights; train (cut to windy_days'
+                size) holds every other flight of the windy days plus random main-route flights
 
 For the held-out splits the validation set is drawn (seed 42, 25 %) from the remaining flights, so it stays
 inside the training conditions, and every flight appears at most once. The condition splits (payload, speed,
@@ -29,7 +34,8 @@ warning is printed. The main route is the most common route label in whichever s
 The per-flight wind comes from data/kilthub/wind.csv (written by `python -m utils.wind`) or, if that is missing, is
 computed from the KiltHub logs in data/kilthub/flights/ (scripts/download_data.sh puts them there). It is the mean
 wind over each flight's cruise, so its scatter between the legs of the route is ~4 m/s: the wind split separates
-windy from calm days rather than ranking flights finely. Wind is strongly clustered by date.
+windy from calm days rather than ranking flights finely. Wind is strongly clustered by date; dates also come from
+parameters.csv. scripts/wind_vs_day.py separates the wind effect from the day effect.
 
     python splits.py            # prints the route source and the size and conditions of every split
 """
@@ -45,15 +51,20 @@ from data_utils import get_flights_and_ranges
 from utils.wind import load_wind
 
 SPLITS = ['random', 'payload500', 'payload250', 'speed12', 'alt100', 'route',
-          'speed10-12', 'speed8-12', 'wind',
-          'random_subsampled', 'random_sub_speed10-12', 'random_sub_speed8-12', 'random_sub_wind']
+          'speed10-12', 'speed8-12', 'wind', 'windy_days',
+          'random_subsampled', 'random_sub_speed10-12', 'random_sub_speed8-12', 'random_sub_wind',
+          'random_sub_windy_days']
 CONTROLS = {'random_subsampled': 'payload500',
             'random_sub_speed10-12': 'speed10-12',
             'random_sub_speed8-12': 'speed8-12',
-            'random_sub_wind': 'wind'}
+            'random_sub_wind': 'wind',
+            'random_sub_windy_days': 'windy_days'}
 # Controls whose held-out condition is rare in the random split's test set, so few held-out flights would be unseen
 # by both models; these test on half of the held-out flights and may train on the other half instead.
 HALF_CONTROLS = ['random_sub_wind']
+# Date-matched controls: same test flights as the held-out split, and every other main-route flight from the test
+# flights' dates is in training, so the control has seen those days and the held-out split has not.
+SAME_DAY_CONTROLS = ['random_sub_windy_days']
 
 FLIGHT_SHEET = 'Flight Sheet.xlsx'
 NO_MAPE_FLIGHTS = [232]  # power <= 0 W at some steps; kept for training, never a held-out test flight
@@ -64,6 +75,7 @@ KILTHUB_URLS = ['https://ndownloader.figshare.com/files/26385034',
                 'https://kilthub.cmu.edu/ndownloader/files/26385034']
 KILTHUB_WIND = os.path.join('kilthub', 'wind.csv')
 WIND_THRESHOLD = 4.34  # m/s, 80th percentile of the main-route flights' cruise wind
+WINDY_DAY_FRACTION = 0.5  # a date is a windy day if at least this share of its main-route flights is windy
 
 
 def _md5(raw):
@@ -112,6 +124,24 @@ def _kilthub_routes(path):
     return dict(zip(params[flight_col].astype(int), params[route_col].astype(str).str.strip()))
 
 
+def _kilthub_dates(path):
+    """{flight: date string} from parameters.csv, or None if it has no date column."""
+    params = pd.read_csv(path)
+    cols = {c.lower(): c for c in params.columns}
+    flight_col = next((cols[c] for c in cols if 'flight' in c), None)
+    if flight_col is None or 'date' not in cols:
+        return None
+    params = params.dropna(subset=[flight_col, cols['date']])
+    return dict(zip(params[flight_col].astype(int), params[cols['date']].astype(str).str.strip()))
+
+
+def windy_days(cond):
+    """Dates on which at least WINDY_DAY_FRACTION of the main-route flights are windy (wind > WIND_THRESHOLD)."""
+    main = cond[cond['main_route'] & cond['wind'].notna() & cond['date'].notna()]
+    frac = (main['wind'] > WIND_THRESHOLD).groupby(main['date']).mean()
+    return sorted(frac.index[frac >= WINDY_DAY_FRACTION])
+
+
 def _wind(data_dir):
     """{flight: cruise wind (m/s)}, NaN for flights without cruise; None if the KiltHub logs are unavailable."""
     path = os.path.join(data_dir, KILTHUB_WIND)
@@ -152,6 +182,8 @@ def load_conditions(data_dir='./data/', download=True):
                       'run scripts/download_data.sh or retry with network access for the KiltHub routes')
 
     cond['main_route'] = cond['route'] == cond['route'].mode()[0]
+    dates = _kilthub_dates(path) if path else None
+    cond['date'] = None if dates is None else [dates.get(f) for f in cond.index]
     wind = _wind(data_dir)
     cond['wind'] = np.nan if wind is None else wind.reindex(cond.index).values
     cond.attrs['route_source'] = source
@@ -177,6 +209,13 @@ def _held_out(cond, split):
         if cond.loc[~off_route, 'wind'].isna().all():
             raise ValueError('no wind estimates; run scripts/download_data.sh for the KiltHub flight logs')
         return cond['wind'] > WIND_THRESHOLD, off_route
+    if split == 'windy_days':
+        days = windy_days(cond)
+        if not days:
+            raise ValueError('no windy days; needs the KiltHub flight logs (wind) and parameters.csv (dates)')
+        on_day = cond['date'].isin(days) & ~off_route
+        test = on_day & (cond['wind'] <= WIND_THRESHOLD)
+        return test, off_route | (on_day & ~test)  # the windy days are never trained on
     if split == 'route':
         return off_route, np.zeros(len(cond), dtype=bool)
     raise ValueError('unknown split {!r}, expected one of {}'.format(split, SPLITS))
@@ -196,6 +235,16 @@ def get_split(all_data, split='random', data_dir='./data/', val_split=0.25, rand
             cond = load_conditions(data_dir)
         held_test, _, held_train = get_split(all_data, CONTROLS[split], data_dir, val_split, random_seed, cond)
         rng = np.random.RandomState(random_seed)
+        if split in SAME_DAY_CONTROLS:
+            main = cond.loc[sorted(all_data)]
+            main = main[main['main_route']]
+            test_range = held_test
+            same_day = np.setdiff1d(main.index[main['date'].isin(cond.loc[held_test, 'date'])].values, test_range)
+            pool = np.setdiff1d(main.index.values, np.concatenate([test_range, same_day]))
+            val_range = np.sort(rng.choice(pool, size=int(np.ceil((len(pool) + len(same_day)) * val_split)),
+                                           replace=False))
+            rest = rng.choice(np.setdiff1d(pool, val_range), size=len(held_train) - len(same_day), replace=False)
+            return test_range, val_range, np.sort(np.concatenate([same_day, rest]))
         if split in HALF_CONTROLS:
             test_range = np.sort(rng.choice(held_test, size=len(held_test) // 2, replace=False))
             main = cond.loc[sorted(all_data)]
