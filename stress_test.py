@@ -53,6 +53,9 @@ def per_flight(paths, all_data, device, liu=True):
             run, seen = {'run': 'liu', 'arch': 'liu', 'split': None, 'seed': 0}, set()
         else:
             model, inputs, ckpt = load_model(path, map_location=device)
+            if 'split' not in inputs:  # saved before train_torch.py recorded the split
+                print('skipping', path, '(no split recorded)')
+                continue
             data, data_min, data_max, _, _, _ = process_data(all_data, stats=(ckpt['data_min'], ckpt['data_max']), **inputs)
             tensors = create_tensors(data, flights, device=device, **inputs)
             size = inputs['nb_filters'] if inputs['net_type'] in ('tcn', 'residual') else inputs['units']
