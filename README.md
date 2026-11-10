@@ -238,7 +238,22 @@ exact sizes.
      same size, 108). Neither saw much wind on the test flights, so this gap is the day effect alone.
 
   `bash scripts/experiments/C_wind_date.sh` trains both TCNs on these (3 seeds, skipping existing runs) and writes
-  `Results/wind_vs_day/wind_vs_day.csv`.
+  `Results/wind_vs_day/wind_vs_day.csv` (copy in `docs/stress_test/wind_vs_day.csv`).
+
+  **Result: it is the wind, not the day.** Power MAPE (%), mean of 3 seeds, gap = held-out − control:
+
+  | comparison | flights | n | s-TCN held-out / control | s-TCN gap MAPE / RE | b-TCN gap MAPE / RE |
+  |---|---|---|---|---|---|
+  | `wind` | all unseen | 20 | 11.87 / 10.82 | +1.05 / +1.47 | +0.99 / +1.84 |
+  | `wind` | on windy days | 12 | 12.90 / 11.69 | +1.21 / +1.77 | +1.25 / +2.58 |
+  | `wind` | windy, other days | 8 | 10.32 / 9.51 | +0.81 / +1.04 | +0.61 / +0.73 |
+  | `windy_days` | calm, on windy days | 11 | 10.22 / 10.09 | +0.13 / −0.52 | +0.09 / −0.50 |
+
+  Never seeing the windy days costs ~0.1 MAPE points on their calm flights (within the ~0.1 seed spread) and slightly
+  *lowers* the energy error, so a new day alone does not hurt. The `wind` gap (re-trained here; +0.8 / +1.2 in the
+  table below) is still +0.6 to +0.8 on windy flights from days the model trained on. Most of the `wind` gap is
+  therefore wind itself; the larger gap on windy days fits their stronger wind (mean 6.2 vs 5.1 m/s), not
+  their being new days.
 - Checkpoints store their split, seed, flight lists and normalization stats. `evaluate_torch.py` and
   `plot_results.py` normalize with the checkpoint's own stats; the ported pretrained models don't store them and
   fall back to the random split, which is what they were trained on. This does not change the baseline numbers.
@@ -287,8 +302,8 @@ included), `speed_<model>.png`.
 - Holding out a payload, speed or altitude barely hurts either TCN; only `alt100` is consistent across seeds for the
   s-TCN. Both TCNs beat Liu on every split.
 - `wind` is the clearest result: both TCNs are worse on unseen windy flights (2–6× the seed spread), even though its
-  control has trained on windy flights. Wind is clustered by date, so this is partly a date shift; `windy_days` and
-  `scripts/wind_vs_day.py` separate the two (see [Held-out splits](#held-out-splits)).
+  control has trained on windy flights. Wind is clustered by date, but the date-matched control shows a new day
+  alone costs ~0.1 points, so the gap is wind itself (see [Held-out splits](#held-out-splits)).
 - The LSTM rows in `gaps.csv` are not meaningful: most retrained LSTMs collapsed (see [Known quirks](#known-quirks)).
 - `route` is not a clean comparison: all off-route flights are in the random test set, so the control never saw
   them either.
