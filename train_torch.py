@@ -1,7 +1,9 @@
-"""PyTorch version of `train.py`. Same arguments, plus --n_hidden, --save_every, --device, --seed and --split.
+"""PyTorch version of `train.py`. Same arguments, plus --n_hidden, --save_every, --device, --seed, --split and
+--variance_head.
 
     python train_torch.py --net_type tcn --nb_filters 16 --kernel_size 2 --n_layers 5 --total_epochs 100
     python train_torch.py --nb_filters 16 --kernel_size 2 --n_layers 5 --total_epochs 30 --split speed12
+    python train_torch.py --nb_filters 64 --kernel_size 2 --n_layers 5 --total_epochs 30 --variance_head
     python train_torch.py --net_type lstm --units 16 --n_hidden 3 --optimizer RMSprop --stateful --batch_size 1
 
 Differences from train.py:
@@ -38,9 +40,12 @@ def train_flight(model, optimizer, tensors, batch_size, stateful):
     state = None
     preds, targets = [], []
     for x_time, x_static, y in iterate_batches(tensors, batch_size, drop_remainder=stateful):
-        pred, new_state = model(x_time, x_static, state)
-        pred = pred.squeeze(-1)
-        loss = F.mse_loss(pred, y)
+        out, new_state = model(x_time, x_static, state)
+        pred = out[:, 0]
+        if model.variance_head:  # mean and variance together: Gaussian negative log-likelihood
+            loss = F.gaussian_nll_loss(pred, y, out[:, 1])
+        else:
+            loss = F.mse_loss(pred, y)
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
@@ -86,6 +91,7 @@ if __name__ == '__main__':
     parser.add_argument('--device', default='cuda' if torch.cuda.is_available() else 'cpu')
     parser.add_argument('--seed', default=0, type=int, help='Seed for the weight initialization / dropout.')
     parser.add_argument('--split', default='random', choices=SPLITS, help='Flight split (see splits.py); held-out splits test on unseen conditions.')
+    parser.add_argument('--variance_head', action='store_true', help='Also predict the variance of the power (Gaussian NLL loss).')
     args = parser.parse_args()
 
     directory = os.path.join(args.directory, '')
@@ -111,6 +117,10 @@ if __name__ == '__main__':
         save_str = '{net_type}_{lookback}_{dropout}_{units}_{n_hidden}_{optimizer}'.format(**inputs)
     else:
         save_str = '{net_type}_{lookback}_{nb_filters}_{kernel_size}_{nb_stacks}_{n_layers}'.format(**inputs)
+        if inputs['dropout'] > 0:  # the TCN name has no dropout field, so dropout runs would overwrite the others
+            save_str += '_d{}'.format(inputs['dropout'])
+    if inputs['variance_head']:
+        save_str += '_var'
     if inputs['split'] != 'random':  # keep the original names for the paper's split
         save_str += '_' + inputs['split']
     if args.seed != 0:
