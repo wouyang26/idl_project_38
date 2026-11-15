@@ -41,6 +41,7 @@ def load_inputs(**config):
         'n_hidden': 1,
         'net_type': 'tcn',
         'stateful': False,
+        'variance_head': False,
     }
     inputs.update(config)
     inputs['dilations'] = [2**i for i in range(inputs['n_layers'])]
@@ -97,13 +98,14 @@ class TCN(nn.Module):
 class DeepEnergyModel(nn.Module):
 
     def __init__(self, net_type='tcn', input_type='concat', nb_filters=32, kernel_size=3,
-                 nb_stacks=1, n_layers=4, units=32, n_hidden=1, dropout=0., stateful=False, **_):
+                 nb_stacks=1, n_layers=4, units=32, n_hidden=1, dropout=0., stateful=False, variance_head=False, **_):
         super().__init__()
         assert net_type in ['lstm', 'tcn']
         assert input_type in ['mixed', 'concat']
         self.net_type = net_type
         self.input_type = input_type
         self.stateful = stateful
+        self.variance_head = variance_head
 
         # 'concat' feeds the 2 static features (density, payload) to the head, 'mixed' to the backbone
         n_time, n_static = (5, 2) if input_type == 'concat' else (7, 0)
@@ -127,13 +129,17 @@ class DeepEnergyModel(nn.Module):
 
         self.power_embedding = nn.Linear(n_features + n_static, 10)
         self.power_reg = nn.Linear(10, 1)
+        if variance_head:
+            # second output: variance of the (normalized) power, trained with the Gaussian NLL
+            self.power_var = nn.Linear(10, 1)
         self.reset_parameters()
 
     def forward(self, x_time, x_static=None, state=None):
         """
         x_time (B, lookback, 5|7), x_static (B, 2) or None for 'mixed',
         state: LSTM (h, c) carried over from the previous batch (stateful nets), else None.
-        Returns (power prediction (B, 1), new state or None).
+        Returns (power prediction (B, 1), new state or None); with `variance_head` the prediction is (B, 2):
+        mean and variance.
         """
         if self.net_type == 'tcn':
             x = x_time
@@ -146,7 +152,11 @@ class DeepEnergyModel(nn.Module):
 
         if self.input_type == 'concat':
             features = torch.cat([features, x_static], dim=1)
-        return self.power_reg(F.relu(self.power_embedding(features))), state
+        h = F.relu(self.power_embedding(features))
+        if self.variance_head:
+            var = F.softplus(self.power_var(h)) + 1e-6
+            return torch.cat([self.power_reg(h), var], dim=1), state
+        return self.power_reg(h), state
 
     @torch.no_grad()
     def reset_parameters(self):
@@ -171,6 +181,10 @@ class DeepEnergyModel(nn.Module):
                         nn.init.zeros_(p)
                         if name.startswith('bias_ih'):  # unit_forget_bias=True
                             p[m.hidden_size:2 * m.hidden_size] = 1.
+        if self.variance_head:
+            # start at a constant variance of 3e-3, about the MSE of a trained b-TCN, so early NLL steps are tame
+            nn.init.zeros_(self.power_var.weight)
+            nn.init.constant_(self.power_var.bias, math.log(math.expm1(3e-3)))
 
 
 def build_model(inputs):
