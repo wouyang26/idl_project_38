@@ -57,8 +57,11 @@ held-out vs control gaps are meaningless at that error level.
 - **Too few epochs** for an LSTM at this learning rate; plot validation MAPE over 60–100 epochs.
 - **Checkpoint choice.** `final.pt` is the last epoch; the LSTM's validation MAPE swings 3–6 points between epochs,
   so keep the best-validation epoch instead.
-- **Port vs training:** score the ported pretrained s-LSTM on the same random-split flights. If it is close to the
-  TCN, the model is fine and our training is the problem.
+- **Port vs training — done (2026-11-17).** On the random split's test flights (`evaluate_torch.py -e test`):
+  pretrained s-LSTM 12.36 / 8.23 (MAPE / RE), b-LSTM 11.47 / 7.59; pretrained s-TCN 9.13 / 5.75, b-TCN 9.06 / 5.37;
+  our retrained s-LSTM (ReLU, seed 0, the paper's recipe) 13.45 / 9.23. So the paper's own LSTMs are ~3 points worse
+  than its TCNs, and our retrain is only ~1 point behind the paper's LSTM on random flights. Most of the gap to the
+  TCN is the LSTM itself, not our port; the extra loss on `wind` / `route` is what is left to explain.
 
 **How.** s-LSTM on `random` (and then `wind` / `random_sub_wind`), one change at a time, 3 seeds, compare
 validation and test MAPE with the s-TCN. Non-stateful runs take minutes on a GPU; stateful ones ~50 min each.
