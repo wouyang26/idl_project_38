@@ -59,7 +59,9 @@ def per_flight(paths, all_data, device, liu=True):
             data, data_min, data_max, _, _, _ = process_data(all_data, stats=(ckpt['data_min'], ckpt['data_max']), **inputs)
             tensors = create_tensors(data, flights, device=device, **inputs)
             size = inputs['nb_filters'] if inputs['net_type'] in ('tcn', 'residual') else inputs['units']
-            run = {'run': os.path.basename(os.path.dirname(path)), 'arch': '{}{}'.format(inputs['net_type'], size),
+            head = inputs.get('head_act', 'relu')  # checkpoints from before --head_act are ReLU
+            run = {'run': os.path.basename(os.path.dirname(path)),
+                   'arch': '{}{}{}'.format(inputs['net_type'], size, '' if head == 'relu' else '-' + head),
                    'split': inputs['split'], 'seed': ckpt['seed'],
                    'train_size': inputs.get('train_size'), 'subset_seed': inputs.get('subset_seed')}
             seen = set(ckpt['ranges']['train'] + ckpt['ranges']['val'])

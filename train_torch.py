@@ -83,6 +83,8 @@ if __name__ == '__main__':
     parser.add_argument('--units', default=32, type=int, help='(For LSTM) The number of units in each layer.')
     parser.add_argument('--net_type', default='tcn', choices=['lstm', 'tcn', 'residual'],
                         help="The type of net to train; 'residual' = Liu physics + TCN correction (Liu refit on the training flights).")
+    parser.add_argument('--head_act', default='relu', choices=['relu', 'leaky'],
+                        help="Activation of the 10-unit head; 'leaky' (slope 0.01) prevents the all-dead-ReLU collapse.")
     parser.add_argument('--stateful', action='store_true', help='Carry the LSTM state across batches of a flight.')
     parser.add_argument('--save_every', default=10, type=int, help='Save a checkpoint every this many epochs.')
     parser.add_argument('--device', default='cuda' if torch.cuda.is_available() else 'cpu')
@@ -117,6 +119,8 @@ if __name__ == '__main__':
         save_str = '{net_type}_{lookback}_{dropout}_{units}_{n_hidden}_{optimizer}'.format(**inputs)
     else:
         save_str = '{net_type}_{lookback}_{nb_filters}_{kernel_size}_{nb_stacks}_{n_layers}'.format(**inputs)
+    if inputs['head_act'] != 'relu':  # keep the original names for the paper's ReLU head
+        save_str += '_' + inputs['head_act']
     if inputs['split'] != 'random':  # keep the original names for the paper's split
         save_str += '_' + inputs['split']
     if inputs['train_size'] is not None:
