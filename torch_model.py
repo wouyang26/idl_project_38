@@ -99,12 +99,15 @@ class TCN(nn.Module):
 class DeepEnergyModel(nn.Module):
 
     def __init__(self, net_type='tcn', input_type='concat', nb_filters=32, kernel_size=3,
-                 nb_stacks=1, n_layers=4, units=32, n_hidden=1, dropout=0., stateful=False, **_):
+                 nb_stacks=1, n_layers=4, units=32, n_hidden=1, dropout=0., stateful=False, head_act='relu', **_):
         super().__init__()
         assert net_type in ['lstm', 'tcn']
         assert input_type in ['mixed', 'concat']
+        assert head_act in ['relu', 'leaky']
         self.net_type = net_type
         self.input_type = input_type
+        # 'leaky' keeps a gradient through negative head units, so they can't all die (the collapse in README)
+        self.head_act = head_act
         self.stateful = stateful
 
         # 'concat' feeds the 2 static features (density, payload) to the head, 'mixed' to the backbone
@@ -148,7 +151,9 @@ class DeepEnergyModel(nn.Module):
 
         if self.input_type == 'concat':
             features = torch.cat([features, x_static], dim=1)
-        return self.power_reg(F.relu(self.power_embedding(features))), state
+        h = self.power_embedding(features)
+        h = F.leaky_relu(h, negative_slope=0.01) if self.head_act == 'leaky' else F.relu(h)
+        return self.power_reg(h), state
 
     @torch.no_grad()
     def reset_parameters(self):
