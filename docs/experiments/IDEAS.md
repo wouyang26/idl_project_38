@@ -36,3 +36,32 @@ hybrid adds only Liu's 5 constants, and Liu alone is 5 parameters. So far the ex
 - Later: 8-bit quantization of the chosen model and its accuracy cost.
 
 **Cost.** ~36–54 small runs, about an hour on a GPU; timing needs no training.
+
+## Why retrained LSTMs are still bad (relevant to D)
+
+**Finding.** The leaky head (`--head_act leaky`, `adesai/leaky-head`) stops the LSTM collapsing to a constant, but
+does not make it good. s-LSTM, 3 seeds, power MAPE (%) held-out / control:
+
+| split | s-LSTM leaky | s-LSTM ReLU | s-TCN |
+|---|---|---|---|
+| `wind` | 17.9 / 20.0 | 17.7 / 19.4 | 11.6 / 10.8 |
+| `route` | 16.1 / 14.7 | 13.5 / 16.2 (1 seed) | 10.9 / 9.8 |
+
+So the dead head was one problem, not the only one: retrained LSTMs are ~6 points worse than the TCN, and their
+held-out vs control gaps are meaningless at that error level.
+
+**Question.** Is it the training recipe or the model? Suspects, cheapest first:
+- **Optimizer and batch size.** The paper's setup is RMSprop at batch size 1 (stateful), ~90k noisy steps per epoch
+  vs the TCN's ~2.8k Adam steps at batch 32. Try Adam, a lower learning rate (1e-4), gradient clipping.
+- **Stateful training.** Try non-stateful, batch 32 windows like the TCN (`--stateful` off). Also much faster.
+- **Too few epochs** for an LSTM at this learning rate; plot validation MAPE over 60–100 epochs.
+- **Checkpoint choice.** `final.pt` is the last epoch; the LSTM's validation MAPE swings 3–6 points between epochs,
+  so keep the best-validation epoch instead.
+- **Port vs training:** score the ported pretrained s-LSTM on the same random-split flights. If it is close to the
+  TCN, the model is fine and our training is the problem.
+
+**How.** s-LSTM on `random` (and then `wind` / `random_sub_wind`), one change at a time, 3 seeds, compare
+validation and test MAPE with the s-TCN. Non-stateful runs take minutes on a GPU; stateful ones ~50 min each.
+
+**Fallback.** If none of these closes the gap, report the final results on the TCNs and state that retrained LSTMs
+were unreliable in our setup.
