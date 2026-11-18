@@ -35,9 +35,17 @@ def iterate_batches(tensors, batch_size, drop_remainder=False):
 
 
 @torch.no_grad()
-def predict_flight(model, x_time, x_static, batch_size=1, stateful=False):
-    """Torch counterpart of `model.reset_states(); model.predict(flight)`. Returns normalized power (N,)."""
+def predict_flight(model, x_time, x_static, batch_size=1, stateful=False, return_var=False, mc_dropout=False):
+    """Torch counterpart of `model.reset_states(); model.predict(flight)`. Returns normalized power (N,).
+
+    return_var: also return the predicted variance (N,) (normalized units); zeros without a variance head.
+    mc_dropout: keep dropout on (MC dropout), so every call gives a different sample.
+    """
     model.eval()
+    if mc_dropout:
+        for m in model.modules():
+            if isinstance(m, (torch.nn.Dropout, torch.nn.Dropout1d)):
+                m.train()
     # a stateful Keras net carries the state of sample i of a batch to sample i of the next one,
     # which only works with equal-sized batches
     drop_remainder = stateful and batch_size > 1
@@ -47,8 +55,12 @@ def predict_flight(model, x_time, x_static, batch_size=1, stateful=False):
         pred, new_state = model(xt, xs, state)
         if stateful:
             state = new_state
-        preds.append(pred.squeeze(-1))
-    return torch.cat(preds).cpu().numpy()
+        preds.append(pred)
+    pred = torch.cat(preds).cpu().numpy()
+    model.eval()
+    if not return_var:
+        return pred[:, 0]
+    return pred[:, 0], (pred[:, 1] if pred.shape[1] > 1 else np.zeros(len(pred), dtype=pred.dtype))
 
 
 def regression_metrics(y_pred, y_true):

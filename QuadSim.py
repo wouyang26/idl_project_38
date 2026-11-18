@@ -3,7 +3,10 @@ from windfield import WindField
 from windfield import DrydenSim
 import pylab as pl
 import pandas as pd
-from IPython import display
+try:  # unused, kept for the notebooks; not installed with requirements-torch.txt
+    from IPython import display
+except ImportError:
+    display = None
 import time
 
 
