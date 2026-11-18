@@ -68,3 +68,32 @@ validation and test MAPE with the s-TCN. Non-stateful runs take minutes on a GPU
 
 **Fallback.** If none of these closes the gap, report the final results on the TCNs and state that retrained LSTMs
 were unreliable in our setup.
+
+## Online adaptation during the flight (Neural-Fly style) — Yashasvi
+
+**Question.** Can the model fix its own wind error mid-flight, from the power it has measured so far? The model is
+worse on unseen wind because it cannot adapt; Neural-Fly (O'Connell et al., *Science Robotics* 2022) handles unseen
+wind by learning a wind-independent representation offline and adapting a few linear coefficients online from the
+measured error. Our setup has the same shape: the drone measures its power throughout the flight.
+
+**Scope.** This helps predict the *remaining* energy part-way through a flight ("can I still finish the delivery?"),
+not the pre-takeoff estimate, where nothing has been measured yet.
+
+**How.** No training; a scoring script on existing checkpoints.
+- Freeze the trained model except its last layer (`power_reg`: 10 weights + 1 bias). Its 10 inputs are the head
+  features, so the output is `w·h + b` (plus Liu for the hybrid).
+- On each test flight, fit `w, b` by recursive least squares (with a prior pulling them toward the trained values,
+  so a few seconds of data can't throw them far) on the first T seconds of measured power, then predict the rest.
+- T ∈ {15, 30, 60} s (flights are 84–194 s, median ~130 s). Score MAPE / energy error on the remaining steps only,
+  for both adapted and unadapted models, so the comparison uses the same steps.
+- Models: s-TCN `wind` and `random_sub_wind` (C checkpoints, 3 seeds, already on the laptop), then the leaky hybrid
+  once its checkpoints are shared. Flights: the 20 unseen windy flights, and the random split's test flights as a
+  check that adapting doesn't hurt calm flights.
+
+**Success.** The `wind` model's error on the rest of unseen windy flights drops by more than the seed spread, and
+the gap to `random_sub_wind` shrinks.
+
+**Caveat.** The first seconds are takeoff and climb, which load the motors differently from cruise, so coefficients
+fit there may not transfer. If short T hurts, also try adapting on a sliding window (the last T seconds) instead.
+
+**Cost.** Minutes on a laptop CPU.
