@@ -256,6 +256,22 @@ exact sizes.
   table below) is still +0.6 to +0.8 on windy flights from days the model trained on. Most of the `wind` gap is
   therefore wind itself; the larger gap on windy days fits their stronger wind (mean 6.2 vs 5.1 m/s), not
   their being new days.
+
+  **Where in the flight** (`scripts/phase_errors.py`, `docs/experiments/phase_errors/`): phases from altitude
+  (climb until 90 % of peak altitude, descent after the last step above it, cruise between). On the 20 unseen windy
+  flights, held-out − control MAPE / bias of the held-out model (predicted − measured, W):
+
+  | phase | share of flight | s-TCN gap | s-TCN bias | b-TCN gap | b-TCN bias |
+  |---|---|---|---|---|---|
+  | climb | 14 % | +2.3 | −69 W | +2.5 | −63 W |
+  | cruise | 63 % | +1.1 | −30 W | +1.0 | −31 W |
+  | descent | 23 % | +0.1 | −7 W | 0.0 | −7 W |
+
+  The wind gap is all in climb and cruise, none in descent, and the `wind` model *under-predicts* power there
+  (its controls: −38 / −17 W s-TCN, −19 / −6 W b-TCN). So on an unseen windy day the pre-flight energy estimate is
+  optimistic, the risky direction for battery planning. A steady under-prediction is also why refitting the last
+  layer in flight (`scripts/online_adapt.py`) halves the remaining-energy error. On the calm flights of windy days
+  the day effect is +0.4 (climb), +0.2 (cruise), 0.0 (descent).
 - Checkpoints store their split, seed, flight lists and normalization stats. `evaluate_torch.py` and
   `plot_results.py` normalize with the checkpoint's own stats; the ported pretrained models don't store them and
   fall back to the random split, which is what they were trained on. This does not change the baseline numbers.
