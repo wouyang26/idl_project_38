@@ -97,3 +97,24 @@ the gap to `random_sub_wind` shrinks.
 fit there may not transfer. If short T hurts, also try adapting on a sliding window (the last T seconds) instead.
 
 **Cost.** Minutes on a laptop CPU.
+
+**Result (2026-11-19, `scripts/online_adapt.py`, C checkpoints, 3 seeds).** Online mode, error over the rest of
+the flight after T s, % (`docs/experiments/online_adapt/summary.csv`):
+
+| model, flights | T | energy error none → online | power MAPE none → online |
+|---|---|---|---|
+| s-TCN `wind`, 20 unseen windy | 15 s | 5.16 → **2.38** | 11.75 → 11.84 |
+| s-TCN `wind`, 20 unseen windy | 30 s | 4.91 → **3.11** | 11.53 → 11.96 |
+| b-TCN `wind`, 20 unseen windy | 15 s | 5.07 → **2.36** | 11.70 → 11.70 |
+| s-TCN `random_sub_wind` (control) | 15 s | 3.52 → 1.89 | 10.78 → 10.94 |
+| s-TCN `windy_days`, 11 calm | 15 s | 3.34 → 1.03 | 10.21 → 9.59 |
+| s-TCN `windy_days`, 11 calm | 60 s | 2.13 → 2.96 | 9.31 → 9.31 |
+
+- Refitting 11 numbers from the power measured so far roughly halves the error of the remaining-energy estimate on
+  unseen windy flights, for both TCNs, and shrinks the wind vs control energy gap from ~1.6–2.4 to ~0.4–0.5 points
+  (T = 15 s).
+- It fixes the slow bias, not the step-by-step error: power MAPE barely moves on windy flights.
+- It is not wind-specific: it also helps the control and calm flights, most where the bias is largest (wind).
+- It can hurt: on calm flights at T = 60 s the energy error rises (2.1 → 3.0). Fixed mode (fit once on the first T
+  s, mostly takeoff) is worse than no adaptation, as the caveat above expected.
+- lam is picked per model on its validation flights (online, T = 30 s, energy error); 23 of 24 picked 10 or 100.
