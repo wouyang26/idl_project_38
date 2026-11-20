@@ -51,6 +51,9 @@ The TCNs train fine on a CPU: the 30-epoch s-TCN below took about 10 minutes on 
 # s-TCN (use --nb_filters 64 for b-TCN)
 python train_torch.py --nb_filters 16 --kernel_size 2 --n_layers 5 --total_epochs 30
 
+# physics + TCN hybrid: Liu (refit on the training flights) + s-TCN correction; see docs/experiments/A_physics_hybrid.md
+python train_torch.py --net_type residual --nb_filters 16 --kernel_size 2 --n_layers 5 --total_epochs 30
+
 # s-LSTM (use --units 64 for b-LSTM); slow, because batch size 1 is sequential
 python train_torch.py --net_type lstm --units 16 --n_hidden 3 --optimizer RMSprop --stateful --batch_size 1
 ```
@@ -87,6 +90,12 @@ The MAPE in the training log is on normalized power. Use `evaluate_torch.py` for
 | `port_weights.py` | Keras checkpoint → PyTorch converter |
 | `plot_results.py` | Figures and per-flight metrics for a trained checkpoint (the baseline results below) |
 | `splits.py` | Train/val/test splits, including the held-out operating-condition splits (`python splits.py` prints them) |
+| `physics_torch.py` | Liu's power model in PyTorch (induced / profile / parasitic terms) and its least-squares refit |
+| `fit_liu.py` | Liu refit on each held-out split's training flights, scored like the stress test (experiment A1) |
+| `scripts/learning_curve.py` | Test error vs number of training flights, hybrid vs TCN vs refit Liu (experiment A3) |
+| `docs/experiments/` | Experiment specs; `scripts/experiments/*.sh` run them (A: physics + TCN hybrid, C: wind vs day) |
+| `uncertainty.py` | Interval coverage, calibration and wind dependence of the uncertainty methods (below) |
+| `cvar_uncertainty.py` | The paper's CVaR case study with the model's uncertainty in the energy distribution |
 | `models_torch/` | The four converted pretrained models |
 | `docs/baseline/` | Figures, `per_flight_metrics.csv` and `train_log.txt` for the 30-epoch s-TCN baseline |
 
@@ -187,6 +196,8 @@ Payload is stored in kg (0, 0.25, 0.5) in `processed.csv`.
 | `random_sub_speed10-12` / `random_sub_speed8-12` | the paper's split | 78 / 52 | 38 | 35 | controls matched to the speed splits' train sizes |
 | `wind` | main-route flights with cruise wind > 4.34 m/s | 107 | 36 | 36 | the windiest ~20 % of flights |
 | `random_sub_wind` | a random half (18) of the `wind` test flights | 107 | 41 | 18 | control for `wind` (see below) |
+| `windy_days` | the calm flights of the 4 windy days | 108 | 36 | 11 | the "different day" effect without wind (see below) |
+| `random_sub_windy_days` | the same 11 flights | 108 | 42 | 11 | date-matched control for `windy_days` |
 
 Sizes are with routes from the flight sheet (the fallback, see below), except the speed10-12 / speed8-12 / wind rows
 and their controls, which use KiltHub routes. With KiltHub routes, 276 and 277 move to the main route: `route` tests on
@@ -217,6 +228,50 @@ exact sizes.
 - `random_sub_wind` differs from the other controls: the random split's test set holds only a few windy flights,
   so it tests on a random half of the `wind` test flights and trains (cut to `wind`'s size) and validates on the
   other main-route flights, windy half included. This leaves 20 windy flights that neither model saw.
+- **Wind or day?** Wind is clustered by date, so the `wind` gap could be a "different day" effect (battery,
+  temperature, calibration). A windy day is a date with at least half of its main-route flights windy: 2019-06-05,
+  06-11, 06-25 and 06-29 (35 flights, 24 windy, 11 calm; dates from `parameters.csv`). Two checks, in
+  `scripts/wind_vs_day.py`:
+  1. No new training: of the 20 unseen `wind` test flights, 12 are on windy days (the `wind` model trained on only 8
+     flights of those days) and 8 are windy flights on other days, whose days it trained on. A gap that persists on
+     those 8 is wind, not the day.
+  2. `windy_days` vs `random_sub_windy_days`: both test on the 11 calm flights of the windy days. `windy_days` never
+     trains on those days; its control trains on all 24 of their other flights (+ random main-route flights to the
+     same size, 108). Neither saw much wind on the test flights, so this gap is the day effect alone.
+
+  `bash scripts/experiments/C_wind_date.sh` trains both TCNs on these (3 seeds, skipping existing runs) and writes
+  `Results/wind_vs_day/wind_vs_day.csv` (copy in `docs/stress_test/wind_vs_day.csv`).
+
+  **Result: it is the wind, not the day.** Power MAPE (%), mean of 3 seeds, gap = held-out − control:
+
+  | comparison | flights | n | s-TCN held-out / control | s-TCN gap MAPE / RE | b-TCN gap MAPE / RE |
+  |---|---|---|---|---|---|
+  | `wind` | all unseen | 20 | 11.87 / 10.82 | +1.05 / +1.47 | +0.99 / +1.84 |
+  | `wind` | on windy days | 12 | 12.90 / 11.69 | +1.21 / +1.77 | +1.25 / +2.58 |
+  | `wind` | windy, other days | 8 | 10.32 / 9.51 | +0.81 / +1.04 | +0.61 / +0.73 |
+  | `windy_days` | calm, on windy days | 11 | 10.22 / 10.09 | +0.13 / −0.52 | +0.09 / −0.50 |
+
+  Never seeing the windy days costs ~0.1 MAPE points on their calm flights (within the ~0.1 seed spread) and slightly
+  *lowers* the energy error, so a new day alone does not hurt. The `wind` gap (re-trained here; +0.8 / +1.2 in the
+  table below) is still +0.6 to +0.8 on windy flights from days the model trained on. Most of the `wind` gap is
+  therefore wind itself; the larger gap on windy days fits their stronger wind (mean 6.2 vs 5.1 m/s), not
+  their being new days.
+
+  **Where in the flight** (`scripts/phase_errors.py`, `docs/experiments/phase_errors/`): phases from altitude
+  (climb until 90 % of peak altitude, descent after the last step above it, cruise between). On the 20 unseen windy
+  flights, held-out − control MAPE / bias of the held-out model (predicted − measured, W):
+
+  | phase | share of flight | s-TCN gap | s-TCN bias | b-TCN gap | b-TCN bias |
+  |---|---|---|---|---|---|
+  | climb | 14 % | +2.3 | −69 W | +2.5 | −63 W |
+  | cruise | 63 % | +1.1 | −30 W | +1.0 | −31 W |
+  | descent | 23 % | +0.1 | −7 W | 0.0 | −7 W |
+
+  The wind gap is all in climb and cruise, none in descent, and the `wind` model *under-predicts* power there
+  (its controls: −38 / −17 W s-TCN, −19 / −6 W b-TCN). So on an unseen windy day the pre-flight energy estimate is
+  optimistic, the risky direction for battery planning. A steady under-prediction is also why refitting the last
+  layer in flight (`scripts/online_adapt.py`) halves the remaining-energy error. On the calm flights of windy days
+  the day effect is +0.4 (climb), +0.2 (cruise), 0.0 (descent).
 - Checkpoints store their split, seed, flight lists and normalization stats. `evaluate_torch.py` and
   `plot_results.py` normalize with the checkpoint's own stats; the ported pretrained models don't store them and
   fall back to the random split, which is what they were trained on. This does not change the baseline numbers.
@@ -265,7 +320,8 @@ included), `speed_<model>.png`.
 - Holding out a payload, speed or altitude barely hurts either TCN; only `alt100` is consistent across seeds for the
   s-TCN. Both TCNs beat Liu on every split.
 - `wind` is the clearest result: both TCNs are worse on unseen windy flights (2–6× the seed spread), even though its
-  control has trained on windy flights. Wind is clustered by date, so this is partly a date shift.
+  control has trained on windy flights. Wind is clustered by date, but the date-matched control shows a new day
+  alone costs ~0.1 points, so the gap is wind itself (see [Held-out splits](#held-out-splits)).
 - The LSTM rows in `gaps.csv` are not meaningful: most retrained LSTMs collapsed (see [Known quirks](#known-quirks)).
 - `route` is not a clean comparison: all off-route flights are in the random test set, so the control never saw
   them either.
@@ -293,6 +349,113 @@ Matches the paper's Liu numbers on `random` and `test`. Raw output: `docs/liu/li
 - `random` is the authors' 10 hardcoded flights, which include the two normal-route flights 276/277; `route` is the corrected 8.
 - Liu is worst at 12 m/s and off-route. One possible reason: its drag term grows with airspeed cubed.
 
+## Uncertainty
+
+The paper's CVaR takes the model's energy prediction as exact. Here the model also says how unsure it is: each
+method gives a Gaussian N(μ, σ²) of the power at every step. All are b-TCN, random split, 30 epochs, scored on the
+35 test flights:
+
+| Method | Checkpoints | σ is | Retraining |
+|---|---|---|---|
+| `ensemble` | the 3 plain b-TCN seeds | spread of the 3 predictions (model uncertainty only) | none |
+| `var_head` | `tcn_20_64_2_1_5_var` (seed 0) | a second output trained with the Gaussian NLL (noise only) | `--variance_head` |
+| `var_ensemble` | the 3 variance-head seeds | mixture: mean predicted variance + spread of the means (both) | `--variance_head` |
+| `mc_dropout` | `tcn_20_64_2_1_5_d0.1` (seed 0) | spread of 30 passes with dropout on | `--dropout 0.1` |
+
+```bash
+for s in 0 1 2; do
+  python train_torch.py --nb_filters 64 --kernel_size 2 --n_layers 5 --total_epochs 30 --variance_head --seed $s
+  python train_torch.py --nb_filters 64 --kernel_size 2 --n_layers 5 --total_epochs 30 --dropout 0.1 --seed $s
+done
+python uncertainty.py          # coverage, calibration, wind      -> Results/uncertainty/
+python cvar_uncertainty.py     # CVaR with uncertainty (+ --sigma raw) -> Results/uncertainty/
+```
+
+The variance head and dropout leave the mean prediction as good as before (validation MAPE 7.4–7.6 vs 7.7 for the
+plain seed 0). "Recalibrated" scales σ by one factor, fitted so the 90 % interval covers 90 % of the validation
+steps. Results and figures: `docs/uncertainty/`.
+
+### Do the 90 % intervals contain the true power 90 % of the time?
+
+| Method | MAPE | 90 % coverage raw | recalibrated (factor) | 90 % width (recal.) | NLL (recal.) | energy 90 % coverage raw / recal. |
+|---|---|---|---|---|---|---|
+| `ensemble` | 8.60 | 21 % | 91 % (×11.3) | 330 W | 6.89 | 31 % / 97 % |
+| `var_head` | 8.53 | **89 %** | 88 % (×0.98) | 163 W | 5.33 | 100 % / 71 % |
+| `var_ensemble` | **8.36** | **90 %** | 89 % (×0.96) | **160 W** | **5.30** | 100 % / 69 % |
+| `mc_dropout` | 8.67 | 14 % | 90 % (×15.0) | 279 W | 6.37 | 0 % / 71 % |
+
+![calibration](docs/uncertainty/calibration.png)
+
+- **The variance head is calibrated as trained:** its 50/80/90/95 % intervals cover 52/80/89/94 % of the test steps,
+  and its intervals are half as wide as the recalibrated ensemble's. Most of the error is noise in the measured power
+  (RMSE ≈ 50 W), which only the variance head models.
+- **The ensemble and MC dropout are badly overconfident raw** (σ ≈ 5–10 W against ≈ 50 W errors): the 3 seeds and
+  the dropout passes agree with each other far more than with the data. A ×11–15 factor fixes the 90 % level, but
+  the errors are heavier-tailed than a Gaussian, so the recalibrated 50 % intervals cover 64–69 %.
+- **Averaging the 3 variance-head seeds** gives the best MAPE (8.36) and NLL. The ensemble average alone also beats a
+  single plain seed (8.60 vs 8.92 ± 0.17).
+- **Flight energy** (∫P dt, column "energy"): the step σ is treated as fully correlated over the flight (raw), the
+  conservative bound. Measured, the per-step errors decorrelate within ~1 s, but each flight carries a persistent
+  offset, so the energy error is ~7× what independent noise would give: the truth is in between. The raw
+  variance-head σ is safe (100 %, ±6.7 kJ on ~62 kJ flights); recalibrating it on the 38 validation flights
+  over-shrinks it (×0.2 → 69–71 %). The recalibrated ensemble is both safe and tighter (97 %, ±2.9 kJ).
+
+### Is the spread wider on windy flights?
+
+Cruise wind per flight from `utils/wind.py`; 10 of the 35 test flights are windy (> 4.34 m/s):
+
+| Method | Spearman ρ(wind, σ) | ρ(wind, RMSE) | mean σ calm → windy | RMSE calm → windy | 90 % coverage (recal.) calm / windy |
+|---|---|---|---|---|---|
+| `ensemble` | 0.68 | 0.69 | 8.1 → 11.2 W (+38 %) | 47.9 → 65.9 W (+37 %) | 90 % / **92 %** |
+| `var_head` | 0.65 | 0.68 | 48.9 → 58.1 W (+19 %) | 47.5 → 66.3 W (+40 %) | 91 % / **85 %** |
+| `var_ensemble` | 0.64 | 0.67 | 48.7 → 58.5 W (+20 %) | 46.8 → 64.6 W (+38 %) | 91 % / **85 %** |
+| `mc_dropout` | 0.51 | 0.67 | 5.6 → 6.8 W (+22 %) | 48.4 → 66.2 W (+37 %) | 91 % / 89 % |
+
+![wind](docs/uncertainty/wind.png)
+
+- **Yes, every method's σ grows with wind**, but the error grows faster (+37–40 %). **The variance head is
+  overconfident on windy days**: its 90 % intervals cover only 85 % of windy-flight steps. That is the failure the
+  paper's CVaR would inherit.
+- **The ensemble's spread tracks the wind** (+38 % vs +37 %), so after recalibration it covers windy flights as well
+  as calm ones. Seeds disagree more where the wind takes the inputs away from the training data, while the
+  variance head only learned the average noise level.
+
+### CVaR with model uncertainty
+
+`cvar_uncertainty.py` reruns the paper's case study (`sim.py`): 200 Monte-Carlo flights of the path with random inlet
+wind, `Risk` at 99 % with a=64, b=92.34, B=369.36 kJ. The paper uses one energy per flight. Here each flight's energy
+is 100 draws from the method's energy distribution.
+
+The path takes ~1 min and ~28 kJ (8 % of B). There the risk curve is flat, so uncertainty barely moves CVaR (0.211 →
+0.215). To see where it matters, the energies are scaled to k laps (same wind and model error every lap), and
+`max laps` is the longest mission whose 99th-percentile energy keeps the reserve b:
+
+| Energy σ | Energy coverage on real flights | max laps | CVaR 99 % at 7 laps |
+|---|---|---|---|
+| none (paper, seed-0 point estimate) | — | 8 | 0.64 |
+| `ensemble`, recalibrated | 97 % | **7** | 0.97 |
+| `var_head` / `var_ensemble`, raw | 100 % | **7** | 0.96 |
+| `mc_dropout`, recalibrated | 71 % | 7 | 0.95 |
+| `var_head` / `var_ensemble`, recalibrated | 69–71 % | 8 | 0.57–0.59 |
+| `ensemble` / `mc_dropout`, raw | 31 % / 0 % | 8 | 0.58–0.61 |
+
+![cvar](docs/uncertainty/cvar.png)
+
+(Plot: recalibrated σ. `--sigma raw` writes `cvar_raw.*`.)
+
+- **Every energy σ that covers ≥ 90 % of the real test flights cuts the safe mission from 8 to 7 laps** (≈ 12 % less
+  range). At 7 laps, CVaR goes from 0.64 to ~0.96: the paper's estimate says there is margin left, but once the
+  model's own error is included, the worst 1 % of missions are almost into the reserve.
+- Most overconfident versions (raw ensemble / MC dropout, recalibrated variance head) give the paper's answer back:
+  an uncalibrated uncertainty is no better than none. Recalibrated MC dropout is the exception (7 laps despite 71 %
+  coverage on real flights), because its spread grows on the simulated flights.
+- Relative to the flight energy, the raw ensemble spread is ~3× wider on the simulated flights than on the real
+  ones (0.64 kJ on 28 kJ vs 0.44 kJ on 62 kJ): the seeds disagree more on the simulator's inputs, which differ from
+  the logged flights.
+
+Caveats: one split (`random`), b-TCN only, 3 seeds; the energy recalibration is fitted on 38 flights; the lap sweep
+assumes the same wind and model error on every lap.
+
 ## Known quirks
 
 - **Learning rate:** `train.py` passes the optimizer by name, so Adam uses the Keras default lr = 1e-3 (not 0.002).
@@ -319,8 +482,10 @@ After the midterm:
    every split with 3 seeds.
 2. **Physics + TCN hybrid** (ŷ = P_Liu + g_θ, Liu refit on each split's training flights), evaluated as a learning
    curve (5–52 training flights) and on `route` / `wind`.
-3. **Uncertainty:** variance head, deep ensemble, MC dropout (target ≈90 % coverage of the 90 % intervals), and CVaR
-   with model uncertainty. A date-matched control for `wind`.
+3. **Uncertainty:** first pass done (see [Uncertainty](#uncertainty)): variance head, deep ensemble, MC dropout and
+   CVaR with model uncertainty, b-TCN on the random split. Still to do: the `wind` split (is the variance head even
+   more overconfident when it never saw windy days?), a variance-head ensemble recalibrated at the energy level, and
+   a date-matched control for `wind`.
 
 ---
 

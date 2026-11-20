@@ -6,6 +6,8 @@ Layer-for-layer equivalent of `create_advanced_net(..., input_type='concat')`:
     time_invariant (B, 2) ----------------------------------------------+--> concat
         --> Linear(F+2, 10) + ReLU (power_embedding) --> Linear(10, 1) (power_reg)
 
+`ResidualEnergyModel` (net_type 'residual') adds Liu's physics power to the TCN's output.
+
 Pretrained Keras checkpoints can be converted with `port_weights.py`.
 """
 import math
@@ -41,6 +43,7 @@ def load_inputs(**config):
         'n_hidden': 1,
         'net_type': 'tcn',
         'stateful': False,
+        'variance_head': False,
     }
     inputs.update(config)
     inputs['dilations'] = [2**i for i in range(inputs['n_layers'])]
@@ -97,13 +100,18 @@ class TCN(nn.Module):
 class DeepEnergyModel(nn.Module):
 
     def __init__(self, net_type='tcn', input_type='concat', nb_filters=32, kernel_size=3,
-                 nb_stacks=1, n_layers=4, units=32, n_hidden=1, dropout=0., stateful=False, **_):
+                 nb_stacks=1, n_layers=4, units=32, n_hidden=1, dropout=0., stateful=False, head_act='relu',
+                 variance_head=False, **_):
         super().__init__()
         assert net_type in ['lstm', 'tcn']
         assert input_type in ['mixed', 'concat']
+        assert head_act in ['relu', 'leaky']
         self.net_type = net_type
         self.input_type = input_type
+        # 'leaky' keeps a gradient through negative head units, so they can't all die (the collapse in README)
+        self.head_act = head_act
         self.stateful = stateful
+        self.variance_head = variance_head
 
         # 'concat' feeds the 2 static features (density, payload) to the head, 'mixed' to the backbone
         n_time, n_static = (5, 2) if input_type == 'concat' else (7, 0)
@@ -127,13 +135,17 @@ class DeepEnergyModel(nn.Module):
 
         self.power_embedding = nn.Linear(n_features + n_static, 10)
         self.power_reg = nn.Linear(10, 1)
+        if variance_head:
+            # second output: variance of the (normalized) power, trained with the Gaussian NLL
+            self.power_var = nn.Linear(10, 1)
         self.reset_parameters()
 
     def forward(self, x_time, x_static=None, state=None):
         """
         x_time (B, lookback, 5|7), x_static (B, 2) or None for 'mixed',
         state: LSTM (h, c) carried over from the previous batch (stateful nets), else None.
-        Returns (power prediction (B, 1), new state or None).
+        Returns (power prediction (B, 1), new state or None); with `variance_head` the prediction is (B, 2):
+        mean and variance.
         """
         if self.net_type == 'tcn':
             x = x_time
@@ -146,7 +158,12 @@ class DeepEnergyModel(nn.Module):
 
         if self.input_type == 'concat':
             features = torch.cat([features, x_static], dim=1)
-        return self.power_reg(F.relu(self.power_embedding(features))), state
+        h = self.power_embedding(features)
+        h = F.leaky_relu(h, negative_slope=0.01) if self.head_act == 'leaky' else F.relu(h)
+        if self.variance_head:
+            var = F.softplus(self.power_var(h)) + 1e-6
+            return torch.cat([self.power_reg(h), var], dim=1), state
+        return self.power_reg(h), state
 
     @torch.no_grad()
     def reset_parameters(self):
@@ -171,10 +188,50 @@ class DeepEnergyModel(nn.Module):
                         nn.init.zeros_(p)
                         if name.startswith('bias_ih'):  # unit_forget_bias=True
                             p[m.hidden_size:2 * m.hidden_size] = 1.
+        if self.variance_head:
+            # start at a constant variance of 3e-3, about the MSE of a trained b-TCN, so early NLL steps are tame
+            nn.init.zeros_(self.power_var.weight)
+            nn.init.constant_(self.power_var.bias, math.log(math.expm1(3e-3)))
+
+
+class ResidualEnergyModel(DeepEnergyModel):
+    """Physics + TCN hybrid: Liu's power at the window's last step plus the TCN's correction, in normalized power.
+
+    Liu needs raw inputs, so the model keeps the normalization stats and Liu's constants as buffers (saved in the
+    checkpoint; set them with `set_physics`). The last layer starts at zero, so an untrained model is exactly Liu.
+    """
+
+    def __init__(self, **inputs):
+        super().__init__(**dict(inputs, net_type='tcn'))
+        self.register_buffer('liu_consts', torch.zeros(5))
+        self.register_buffer('x_min', torch.zeros(5))  # airspeed_x, airspeed_y, vertspd, aoa, airspeed
+        self.register_buffer('x_max', torch.ones(5))
+        self.register_buffer('p_range', torch.tensor([0., 1.]))  # power min, max
+        nn.init.zeros_(self.power_reg.weight)
+        nn.init.zeros_(self.power_reg.bias)
+
+    def set_physics(self, consts, data_min, data_max):
+        """Liu constants [k1, k2, c2, c4, c5] and the (data_min, data_max) of `process_data`."""
+        self.liu_consts.copy_(torch.as_tensor(consts))
+        self.x_min.copy_(torch.as_tensor(data_min[:5]))
+        self.x_max.copy_(torch.as_tensor(data_max[:5]))
+        self.p_range.copy_(torch.as_tensor([data_min[-1], data_max[-1]]))
+
+    def liu_normalized(self, x_time, x_static):
+        from physics_torch import liu_power
+        raw = x_time[:, -1] * (self.x_max - self.x_min) + self.x_min
+        power = liu_power(raw[:, 2], raw[:, 4], raw[:, 3], x_static[:, 1], self.liu_consts)
+        return ((power - self.p_range[0]) / (self.p_range[1] - self.p_range[0])).unsqueeze(-1)
+
+    def forward(self, x_time, x_static=None, state=None):
+        out, state = super().forward(x_time, x_static, state)  # [correction] or [correction, variance]
+        return torch.cat([self.liu_normalized(x_time, x_static) + out[:, :1], out[:, 1:]], dim=1), state
 
 
 def build_model(inputs):
     """`create_advanced_net` equivalent; `inputs` comes from `load_inputs`."""
+    if inputs['net_type'] == 'residual':
+        return ResidualEnergyModel(**inputs)
     return DeepEnergyModel(**inputs)
 
 
