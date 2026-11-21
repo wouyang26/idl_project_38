@@ -73,12 +73,12 @@ subsets. With few flights the refit constants are poorly determined (at N = 5, c
   spread.
 - Neither: physics didn't help this TCN; report it with the curve.
 
-## Later (only if A2 or A3 shows a win)
+## Follow-up experiments
 
-- **Parameter adaptation** (`--net_type adaptive`): the TCN outputs three bounded multipliers on Liu's induced,
-  profile and parasitic terms (`m = exp(clip(Δ, ±0.7))`) instead of a residual. Precedent: Zhang et al. 2022 / 2025
-  (a latent vector from flight history). The residual hybrid's precedent is NeuroBEM (Bauersfeld et al., RSS 2021).
-- `windy_days` / `random_sub_windy_days` (experiment C) for the hybrid.
+The completed [experiments 5 and 6](adaptive_physics/README.md) compare the leaky residual and plain TCNs on the
+date holdout and its control, and evaluate an adaptive hybrid on wind, routes and the learning curve.
+`--net_type adaptive --head_act leaky` assigns a multiplier in `[0.5, 2]` to each of Liu's induced, profile and
+parasitic terms at each timestep.
 
 ## Compute
 
