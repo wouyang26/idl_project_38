@@ -217,10 +217,13 @@ class ResidualEnergyModel(DeepEnergyModel):
         self.x_max.copy_(torch.as_tensor(data_max[:5]))
         self.p_range.copy_(torch.as_tensor([data_min[-1], data_max[-1]]))
 
-    def liu_normalized(self, x_time, x_static):
-        from physics_torch import liu_power
+    def physics_terms(self, x_time, x_static):
+        from physics_torch import liu_terms
         raw = x_time[:, -1] * (self.x_max - self.x_min) + self.x_min
-        power = liu_power(raw[:, 2], raw[:, 4], raw[:, 3], x_static[:, 1], self.liu_consts)
+        return liu_terms(raw[:, 2], raw[:, 4], raw[:, 3], x_static[:, 1], self.liu_consts)
+
+    def liu_normalized(self, x_time, x_static):
+        power = sum(self.physics_terms(x_time, x_static))
         return ((power - self.p_range[0]) / (self.p_range[1] - self.p_range[0])).unsqueeze(-1)
 
     def forward(self, x_time, x_static=None, state=None):
@@ -228,8 +231,34 @@ class ResidualEnergyModel(DeepEnergyModel):
         return torch.cat([self.liu_normalized(x_time, x_static) + out[:, :1], out[:, 1:]], dim=1), state
 
 
+class AdaptiveEnergyModel(ResidualEnergyModel):
+    """Learn bounded multipliers for induced, profile and parasitic power, in that order."""
+
+    def __init__(self, **inputs):
+        super().__init__(**inputs)
+        if self.variance_head or self.stateful or self.input_type != 'concat' or self.head_act != 'leaky':
+            raise ValueError("adaptive requires --head_act leaky, concat inputs and a stateless point model")
+        self.power_reg = nn.Linear(self.power_embedding.out_features, 3)
+        nn.init.zeros_(self.power_reg.weight)
+        nn.init.zeros_(self.power_reg.bias)
+
+    def term_prediction(self, x_time, x_static):
+        """Return total power (watts), multipliers and unadjusted Liu terms (watts)."""
+        logits, _ = DeepEnergyModel.forward(self, x_time, x_static)
+        multipliers = logits.clamp(-math.log(2), math.log(2)).exp()
+        terms = torch.stack(self.physics_terms(x_time, x_static), dim=1)
+        watts = (multipliers * terms).sum(dim=1, keepdim=True)
+        return watts, multipliers, terms
+
+    def forward(self, x_time, x_static=None, state=None):
+        watts, _, _ = self.term_prediction(x_time, x_static)
+        return (watts - self.p_range[0]) / (self.p_range[1] - self.p_range[0]), None
+
+
 def build_model(inputs):
     """`create_advanced_net` equivalent; `inputs` comes from `load_inputs`."""
+    if inputs['net_type'] == 'adaptive':
+        return AdaptiveEnergyModel(**inputs)
     if inputs['net_type'] == 'residual':
         return ResidualEnergyModel(**inputs)
     return DeepEnergyModel(**inputs)

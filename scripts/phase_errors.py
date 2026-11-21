@@ -58,7 +58,7 @@ if __name__ == '__main__':
         flights = test[inputs['split']]
         data, data_min, data_max, _, _, _ = process_data(all_data, stats=(ckpt['data_min'], ckpt['data_max']), **inputs)
         tensors = create_tensors(data, flights, **inputs)
-        size = inputs['nb_filters'] if inputs['net_type'] in ('tcn', 'residual') else inputs['units']
+        size = inputs['nb_filters'] if inputs['net_type'] in ('tcn', 'residual', 'adaptive') else inputs['units']
         arch = '{}{}{}'.format(inputs['net_type'], size, '' if inputs.get('head_act', 'relu') == 'relu' else '-leaky')
         for f in flights:
             pred = predict_flight(model, *tensors[f][:2], inputs['batch_size'], inputs['stateful'])

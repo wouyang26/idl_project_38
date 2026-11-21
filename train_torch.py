@@ -1,6 +1,6 @@
 """PyTorch version of `train.py`. Same arguments, plus --n_hidden, --save_every, --device, --seed, --split,
---train_size / --subset_seed (learning curves), --net_type residual (Liu physics + TCN correction), --head_act and
---variance_head.
+--train_size / --subset_seed (learning curves), --net_type residual or adaptive (Liu + TCN),
+--head_act and --variance_head.
 
     python train_torch.py --net_type tcn --nb_filters 16 --kernel_size 2 --n_layers 5 --total_epochs 100
     python train_torch.py --nb_filters 16 --kernel_size 2 --n_layers 5 --total_epochs 30 --split speed12
@@ -86,8 +86,9 @@ if __name__ == '__main__':
     parser.add_argument('--optimizer', default='Adam', choices=list(OPTIMIZERS), help='Optimizer used by the neural network.')
     parser.add_argument('--dropout', default=0., type=float, help='Dropout used by the neural network.')
     parser.add_argument('--units', default=32, type=int, help='(For LSTM) The number of units in each layer.')
-    parser.add_argument('--net_type', default='tcn', choices=['lstm', 'tcn', 'residual'],
-                        help="The type of net to train; 'residual' = Liu physics + TCN correction (Liu refit on the training flights).")
+    parser.add_argument('--net_type', default='tcn', choices=['lstm', 'tcn', 'residual', 'adaptive'],
+                        help="Model type. 'residual' adds a TCN correction to refitted Liu power. "
+                             "'adaptive' rescales its three terms and requires --head_act leaky.")
     parser.add_argument('--head_act', default='relu', choices=['relu', 'leaky'],
                         help="Activation of the 10-unit head; 'leaky' (slope 0.01) prevents the all-dead-ReLU collapse.")
     parser.add_argument('--stateful', action='store_true', help='Carry the LSTM state across batches of a flight.')
@@ -99,6 +100,8 @@ if __name__ == '__main__':
     parser.add_argument('--subset_seed', default=0, type=int, help='Which random subset --train_size takes.')
     parser.add_argument('--variance_head', action='store_true', help='Also predict the variance of the power (Gaussian NLL loss).')
     args = parser.parse_args()
+    if args.net_type == 'adaptive' and (args.head_act != 'leaky' or args.stateful or args.variance_head):
+        parser.error('adaptive requires --head_act leaky and is incompatible with --stateful or --variance_head')
 
     directory = os.path.join(args.directory, '')
     if not os.path.exists(directory):
@@ -144,7 +147,7 @@ if __name__ == '__main__':
     csv_dir.mkdir(parents=True, exist_ok=True)
 
     model = build_model(inputs).to(args.device)
-    if inputs['net_type'] == 'residual':  # Liu refit on the training flights only (never validation or test)
+    if inputs['net_type'] in ('residual', 'adaptive'):  # Liu refit on the training flights only (never validation or test)
         from physics_torch import fit_liu
         liu = fit_liu(all_data, train_range)
         model.set_physics(liu, data_min, data_max)
