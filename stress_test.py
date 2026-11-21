@@ -59,9 +59,18 @@ def per_flight(paths, all_data, device, liu=True):
             data, data_min, data_max, _, _, _ = process_data(all_data, stats=(ckpt['data_min'], ckpt['data_max']), **inputs)
             tensors = create_tensors(data, flights, device=device, **inputs)
             size = inputs['nb_filters'] if inputs['net_type'] in ('tcn', 'residual') else inputs['units']
-            head = inputs.get('head_act', 'relu')  # checkpoints from before --head_act are ReLU
-            run = {'run': os.path.basename(os.path.dirname(path)),
-                   'arch': '{}{}{}'.format(inputs['net_type'], size, '' if head == 'relu' else '-' + head),
+            # the label names every setting that differs from the paper's, so different models are never averaged
+            # together (e.g. RMSprop and Adam LSTMs); default runs keep their old labels
+            arch = '{}{}'.format(inputs['net_type'], size)
+            if inputs.get('optimizer') != ('RMSprop' if inputs['net_type'] == 'lstm' else 'Adam'):
+                arch += '-' + inputs['optimizer'].lower()
+            if inputs.get('dropout', 0) > 0:
+                arch += '-d{}'.format(inputs['dropout'])
+            if inputs.get('variance_head'):
+                arch += '-var'
+            if inputs.get('head_act', 'relu') != 'relu':  # checkpoints from before --head_act are ReLU
+                arch += '-' + inputs['head_act']
+            run = {'run': os.path.basename(os.path.dirname(path)), 'arch': arch,
                    'split': inputs['split'], 'seed': ckpt['seed'],
                    'train_size': inputs.get('train_size'), 'subset_seed': inputs.get('subset_seed')}
             seen = set(ckpt['ranges']['train'] + ckpt['ranges']['val'])
