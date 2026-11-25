@@ -385,7 +385,7 @@ steps. Results and figures: `docs/uncertainty/`.
 | `ensemble` | 8.60 | 21 % | 91 % (×11.3) | 330 W | 6.89 | 31 % / 97 % |
 | `var_head` | 8.53 | **89 %** | 88 % (×0.98) | 163 W | 5.33 | 100 % / 71 % |
 | `var_ensemble` | **8.36** | **90 %** | 89 % (×0.96) | **160 W** | **5.30** | 100 % / 69 % |
-| `mc_dropout` | 8.67 | 14 % | 90 % (×15.0) | 279 W | 6.37 | 0 % / 71 % |
+| `mc_dropout` | 8.67 | 14 % | 90 % (×15.0) | 280 W | 6.41 | 0 % / 74 % |
 
 ![calibration](docs/uncertainty/calibration.png)
 
@@ -412,7 +412,7 @@ Cruise wind per flight from `utils/wind.py`; 10 of the 35 test flights are windy
 | `ensemble` | 0.68 | 0.69 | 8.1 → 11.2 W (+38 %) | 47.9 → 65.9 W (+37 %) | 90 % / **92 %** |
 | `var_head` | 0.65 | 0.68 | 48.9 → 58.1 W (+19 %) | 47.5 → 66.3 W (+40 %) | 91 % / **85 %** |
 | `var_ensemble` | 0.64 | 0.67 | 48.7 → 58.5 W (+20 %) | 46.8 → 64.6 W (+38 %) | 91 % / **85 %** |
-| `mc_dropout` | 0.51 | 0.67 | 5.6 → 6.8 W (+22 %) | 48.4 → 66.2 W (+37 %) | 91 % / 89 % |
+| `mc_dropout` | 0.53 | 0.68 | 5.6 → 6.8 W (+22 %) | 48.4 → 66.2 W (+37 %) | 91 % / 89 % |
 
 ![wind](docs/uncertainty/wind.png)
 
@@ -438,7 +438,7 @@ The path takes ~1 min and ~28 kJ (8 % of B). There the risk curve is flat, so un
 | none (paper, seed-0 point estimate) | — | 8 | 0.64 |
 | `ensemble`, recalibrated | 97 % | **7** | 0.97 |
 | `var_head` / `var_ensemble`, raw | 100 % | **7** | 0.96 |
-| `mc_dropout`, recalibrated | 71 % | 7 | 0.95 |
+| `mc_dropout`, recalibrated | 74 % | 6 | 1.00 |
 | `var_head` / `var_ensemble`, recalibrated | 69–71 % | 8 | 0.57–0.59 |
 | `ensemble` / `mc_dropout`, raw | 31 % / 0 % | 8 | 0.58–0.61 |
 
@@ -450,14 +450,77 @@ The path takes ~1 min and ~28 kJ (8 % of B). There the risk curve is flat, so un
   range). At 7 laps, CVaR goes from 0.64 to ~0.96: the paper's estimate says there is margin left, but once the
   model's own error is included, the worst 1 % of missions are almost into the reserve.
 - Most overconfident versions (raw ensemble / MC dropout, recalibrated variance head) give the paper's answer back:
-  an uncalibrated uncertainty is no better than none. Recalibrated MC dropout is the exception (7 laps despite 71 %
-  coverage on real flights), because its spread grows on the simulated flights.
+  an uncalibrated uncertainty is no better than none. Recalibrated MC dropout is the exception (6 laps despite 74 %
+  coverage on real flights), because its spread grows on the simulated flights. Its energy result is also unstable:
+  its raw energy spread is tiny (0.03 kJ), so the recalibration factor (×47–58) and the lap count (6–7) move with the
+  random dropout masks; both scripts now seed them (`--seed`).
 - Relative to the flight energy, the raw ensemble spread is ~3× wider on the simulated flights than on the real
   ones (0.64 kJ on 28 kJ vs 0.44 kJ on 62 kJ): the seeds disagree more on the simulator's inputs, which differ from
   the logged flights.
 
 Caveats: one split (`random`), b-TCN only, 3 seeds; the energy recalibration is fitted on 38 flights; the lap sweep
 assumes the same wind and model error on every lap.
+
+### Uncertainty on unseen wind
+
+Does the model know it is worse on windy days it never trained on? The b-TCN trained without windy flights (`wind`)
+against its control (`random_sub_wind`, same training size, half of the windy flights in training), scored on the
+20 windy flights that no run of either trained or validated on (the flights `stress_test.py` scores). Each model is
+recalibrated on its own validation flights, so the `wind` models only ever calibrate on calm days. The ensembles are
+the Experiment C checkpoints. The variance heads are new:
+
+```bash
+for s in wind random_sub_wind; do for seed in 0 1 2; do
+  python train_torch.py --nb_filters 64 --kernel_size 2 --n_layers 5 --total_epochs 30 --variance_head --split $s --seed $seed
+done; done
+python uncertainty.py --split wind                               # -> Results/uncertainty_wind/
+python cvar_uncertainty.py --split wind                          # normal day: the paper's 3 +- 1.5 m/s inlet wind
+python cvar_uncertainty.py --split wind --inlet_mag 6 1          # windy day
+```
+
+| 20 unseen windy flights | MAPE | mean σ (raw) | RMSE | 90 % coverage raw → recal. | 90 % width (raw) | energy bias |
+|---|---|---|---|---|---|---|
+| `ensemble`, never saw wind | 11.64 | 8.3 W | 77.8 W | 15 % → 90 % (×17.4) | 28 W | **−5.5 %** |
+| `ensemble`, control | 10.61 | 9.3 W | 67.3 W | 19 % → 92 % (×14.5) | 30 W | −0.9 % |
+| `var_head`, never saw wind | 11.92 | 44.3 W | 79.2 W | **68 % → 75 %** | 146 W | **−5.4 %** |
+| `var_head`, control | 10.73 | 55.3 W | 70.4 W | 83 % → 80 % | 181 W | −3.4 % |
+| `var_ensemble`, never saw wind | 12.01 | 45.1 W | 80.3 W | **68 % → 76 %** | 148 W | **−6.3 %** |
+| `var_ensemble`, control | 10.57 | 56.8 W | 68.4 W | 85 % → 80 % | 186 W | −2.3 % |
+
+Energy bias = mean (predicted − true) / true flight energy; negative means the energy, and so the risk, is
+underestimated. Figures and CSVs: `docs/uncertainty_wind/`.
+
+![calibration on unseen wind](docs/uncertainty_wind/calibration.png)
+
+- **No, the model doesn't know it is worse.** The variance head that never saw wind predicts a *smaller* σ on windy
+  flights than the control (44 vs 55 W), while its error is *larger* (79 vs 70 W). Its 90 % intervals cover only 68 %
+  of the steps (control 83 %), and recalibrating on calm validation flights only gets it to 75 %. It learned the noise
+  level of calm days and applies it everywhere.
+- **The ensemble's spread doesn't grow either** (8.3 vs 9.3 W raw), but its recalibration factor, fitted on calm days,
+  is so large (×17) that it still covers 90 %, at the price of intervals ~3× wider than the variance head's.
+- **The energy is under-predicted** by 5.4–6.3 % without wind in training, against 0.9–3.4 % for the controls. The
+  phase analysis above found the same thing at the power level (under-predicted climb and cruise).
+
+**CVaR on an unseen windy day.** Same case study as above. On a normal day (3 ± 1.5 m/s inlet wind) the `wind` and
+control models agree: 8 laps each from the point estimate. On a windy day (6 ± 1 m/s inlet wind; 5 of 200
+simulations could not reach the goal and are dropped, `--keep_failed` keeps them):
+
+| Windy day | energy per lap | max laps (point) | max laps (with uncertainty, recal. / raw) | CVaR 99 % at 5 laps (point) |
+|---|---|---|---|---|
+| never saw wind | 28.1 kJ | **7** | 6 / 6 (all three methods) | 0.61 |
+| control | 29.2 kJ | 6 | 6 / 5–6 | 0.69 |
+
+![cvar on a windy day](docs/uncertainty_wind/cvar_inlet6.png)
+
+- **The risk estimate of the model that never saw wind is optimistic:** it predicts 4 % less energy per lap than the
+  control, so the paper's point-estimate CVaR approves a 7-lap mission that the wind-aware model rejects, and puts the
+  5-lap risk at 0.61 instead of 0.69. On real windy flights the bias is −5.5 % (table above).
+- **Adding its uncertainty (any of the three methods) brings it back to 6 laps**, the control's answer. Here the
+  extra energy spread is enough to cover the bias, even though the variance head's power intervals are overconfident.
+  That margin is about one lap: a larger bias, or a longer mission, would not be covered.
+
+Caveats: b-TCN only; 20 scored flights, all windy (no calm reference inside the same split); the simulator's inlet
+wind is not the same quantity as `utils/wind.py`'s cruise wind; MC dropout wasn't trained on these splits.
 
 ## Known quirks
 
@@ -496,9 +559,10 @@ After the midterm:
 2. **Physics + TCN hybrids:** the residual and adaptive comparisons on wind, routes and training-set sizes are complete
    (see [experiments 5 and 6](docs/experiments/adaptive_physics/README.md)).
 3. **Uncertainty:** first pass done (see [Uncertainty](#uncertainty)): variance head, deep ensemble, MC dropout and
-   CVaR with model uncertainty, b-TCN on the random split. Still to do: the `wind` split (is the variance head even
-   more overconfident when it never saw windy days?), a variance-head ensemble recalibrated at the energy level, and
-   a date-matched control for `wind`.
+   CVaR with model uncertainty, b-TCN on the random split, and on the `wind` split (see
+   [Uncertainty on unseen wind](#uncertainty-on-unseen-wind): the variance head is overconfident and the energy is
+   under-predicted on unseen windy days). Still to do: a variance-head ensemble recalibrated at the energy level, and
+   the uncertainty methods on `windy_days`.
 
 ---
 
