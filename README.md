@@ -45,7 +45,7 @@ The TCNs train fine on a CPU: the 30-epoch s-TCN below took about 10 minutes on 
 | `python port_weights.py` | Converts the Keras checkpoints in `models/` to `models_torch/*.pt`. Already done; needs TensorFlow. |
 | `python port_weights.py --verify` | Also runs the original Keras model and prints the max output difference. |
 
-### Training the paper's models
+### Training the paper's models and physics hybrids
 
 ```bash
 # s-TCN (use --nb_filters 64 for b-TCN)
@@ -53,6 +53,9 @@ python train_torch.py --nb_filters 16 --kernel_size 2 --n_layers 5 --total_epoch
 
 # physics + TCN hybrid: Liu (refit on the training flights) + s-TCN correction; see docs/experiments/A_physics_hybrid.md
 python train_torch.py --net_type residual --nb_filters 16 --kernel_size 2 --n_layers 5 --total_epochs 30
+
+# adaptive Liu terms, as used for the wind holdout in experiment 6
+python train_torch.py --net_type adaptive --head_act leaky --nb_filters 16 --kernel_size 2 --n_layers 5 --total_epochs 30 --split wind
 
 # s-LSTM (use --units 64 for b-LSTM); slow, because batch size 1 is sequential
 python train_torch.py --net_type lstm --units 16 --n_hidden 3 --optimizer RMSprop --stateful --batch_size 1
@@ -72,7 +75,7 @@ The MAPE in the training log is on normalized power. Use `evaluate_torch.py` for
 | `-e` | evaluate | Flight sets: `train`, `val`, `test`, `random`, `all`, or a held-out split name (its test flights) |
 | `--unseen` | evaluate | Drop every flight any listed model trained or validated on, so all rows are scored on the same unseen flights (headers show `n`) |
 | `--split` | train | `random` (paper), `payload500`, `payload250`, `speed12`, `alt100`, `route`, `speed10-12`, `speed8-12`, or a control: `random_subsampled`, `random_sub_speed10-12`, `random_sub_speed8-12`; see [Held-out splits](#held-out-splits) |
-| `--net_type` | train | `tcn` or `lstm` |
+| `--net_type` | train | `tcn`, `lstm`, `residual` (add a correction to Liu), or `adaptive` (rescale Liu's three terms, requires `--head_act leaky`) |
 | `--nb_filters`, `--kernel_size`, `--n_layers`, `--nb_stacks` | train | TCN size (dilations 1, 2, …, 2^(n_layers−1)) |
 | `--units`, `--n_hidden`, `--stateful` | train | LSTM size, number of layers, carry state across batches |
 | `--total_epochs`, `--batch_size`, `--optimizer`, `--dropout` | train | Training settings (optimizer: `Adam`, `RMSprop`, `SGD`) |
@@ -472,6 +475,16 @@ assumes the same wind and model error on every lap.
   Keras defaults, so this is the authors' training setup, not a port bug. `final.pt` is the last epoch, with no
   best-checkpoint selection.
 
+## Adaptive physics results (experiments 5 and 6)
+
+All 105 runs in the matched leaky s-TCN sweep finished. On 20 unseen windy flights,
+adaptive Liu reduced mean energy underprediction to **0.923 Wh per flight**, compared with
+1.234 Wh for the plain TCN and 1.047 Wh for the additive residual. Cruise accounted for the largest
+reduction in signed energy shortfall. Adaptive had higher underprediction than both baselines in
+the wind-exposed control, and its power MAPE was close to residual across the learning curve.
+On 11 calm flights from held-out windy dates, the residual hybrid modestly reduced absolute
+energy error. [Results, per-flight data and reproduction](docs/experiments/adaptive_physics/README.md)
+
 ## Next steps
 
 Done before the midterm: the PyTorch port and reproduction, Liu, the held-out splits with size-matched controls and
@@ -480,8 +493,8 @@ Done before the midterm: the PyTorch port and reproduction, Liu, the held-out sp
 After the midterm:
 1. **LSTM training:** make it reliable (a leaky ReLU head, a lower learning rate or Adam), then rerun both LSTMs on
    every split with 3 seeds.
-2. **Physics + TCN hybrid** (ŷ = P_Liu + g_θ, Liu refit on each split's training flights), evaluated as a learning
-   curve (5–52 training flights) and on `route` / `wind`.
+2. **Physics + TCN hybrids:** the residual and adaptive comparisons on wind, routes and training-set sizes are complete
+   (see [experiments 5 and 6](docs/experiments/adaptive_physics/README.md)).
 3. **Uncertainty:** first pass done (see [Uncertainty](#uncertainty)): variance head, deep ensemble, MC dropout and
    CVaR with model uncertainty, b-TCN on the random split. Still to do: the `wind` split (is the variance head even
    more overconfident when it never saw windy days?), a variance-head ensemble recalibrated at the energy level, and

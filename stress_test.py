@@ -58,7 +58,7 @@ def per_flight(paths, all_data, device, liu=True):
                 continue
             data, data_min, data_max, _, _, _ = process_data(all_data, stats=(ckpt['data_min'], ckpt['data_max']), **inputs)
             tensors = create_tensors(data, flights, device=device, **inputs)
-            size = inputs['nb_filters'] if inputs['net_type'] in ('tcn', 'residual') else inputs['units']
+            size = inputs['nb_filters'] if inputs['net_type'] in ('tcn', 'residual', 'adaptive') else inputs['units']
             # the label names every setting that differs from the paper's, so different models are never averaged
             # together (e.g. RMSprop and Adam LSTMs); default runs keep their old labels
             arch = '{}{}'.format(inputs['net_type'], size)
@@ -167,6 +167,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('-d', '--directory', default='./', help='Working directory for data.')
     parser.add_argument('--ckpts', default='Results/ckpts/*/final.pt', help='Glob of checkpoints to evaluate.')
+    parser.add_argument('--manifest', help='Evaluate these exact checkpoint paths, one per line (fresh output directory).')
     parser.add_argument('--out', default='Results/stress_test', help='Output directory.')
     parser.add_argument('--device', default='cuda' if torch.cuda.is_available() else 'cpu')
     args = parser.parse_args()
@@ -177,9 +178,19 @@ if __name__ == '__main__':
     cond = load_conditions(data_dir)
 
     csv = os.path.join(args.out, 'per_flight.csv')
+    if args.manifest:
+        with open(args.manifest) as manifest:
+            candidates = [line.strip() for line in manifest if line.strip()]
+        names = {os.path.basename(os.path.dirname(path)) for path in candidates}
+        if not candidates or len(names) != len(candidates) or not all(os.path.isfile(p) for p in candidates):
+            parser.error('empty, missing or duplicate checkpoints in manifest')
+        if os.path.exists(csv):
+            parser.error('--manifest requires a fresh output directory to avoid stale checkpoint metrics')
+    else:
+        candidates = glob.glob(args.ckpts)
     df = pd.read_csv(csv) if os.path.exists(csv) else None
     done = set() if df is None else set(df['run'])
-    paths = [p for p in sorted(glob.glob(args.ckpts)) if os.path.basename(os.path.dirname(p)) not in done]
+    paths = [p for p in sorted(candidates) if os.path.basename(os.path.dirname(p)) not in done]
     if paths or 'liu' not in done:
         new = per_flight(paths, all_data, args.device, liu='liu' not in done)
         df = new if df is None else pd.concat([df, new], ignore_index=True)
